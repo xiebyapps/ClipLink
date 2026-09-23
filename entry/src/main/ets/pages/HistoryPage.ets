@@ -6,8 +6,12 @@ import { ClipboardUtil } from '../utils/ClipboardUtil';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { ImageUtil } from '../utils/ImageUtil';
+import { UserFileSaveUtil } from '../utils/UserFileSaveUtil';
+import { LocalizationUtil } from '../utils/LocalizationUtil';
+import { InteractionEffectUtil } from '../utils/InteractionEffectUtil';
 import { ThemeUtil, ThemePalette } from '../utils/ThemeUtil';
 import { getHistoryActionFeedback, getHistoryListStyleSpec } from '../utils/PageScaffoldUtil';
+import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType } from '@kit.UIDesignKit';
 
 interface HistoryViewItem extends HistoryRecordDto {
   previewPixelMap?: image.PixelMap;
@@ -23,9 +27,24 @@ export default struct HistoryPage {
   @State isRefreshing: boolean = false;
   @State isLoadingMore: boolean = false;
   @State hasMore: boolean = true;
+  @State galleryFileKeys: string[] = [];
+  @State downloadActive: boolean = false;
+  @State downloadSaving: boolean = false;
+  @State downloadName: string = '';
+  @State downloadReceived: number = 0;
+  @State downloadTotal: number = 0;
+  @State downloadSpeed: number = 0;
+  @State viewportWidth: number = 360;
+  @State viewportHeight: number = 800;
+  @State useHdsEffects: boolean = false;
+  @State pressedButton: string = '';
   @StorageLink('historyRefreshToken') @Watch('handleHistoryRefreshTokenChange')
   historyRefreshToken: number = 0;
   @StorageLink('appTheme') appTheme: string = 'auto';
+  @StorageLink('floatingTabsEnabled') supportsFloatingTabs: boolean = false;
+  @StorageLink('safeAreaBottom') safeAreaBottom: number = 0;
+  @StorageLink('appLanguage') appLanguage: string = 'system';
+  @StorageLink('systemLanguage') systemLanguage: string = 'en';
   @StorageLink('preferPureBlackInDark') preferPureBlackInDark: boolean = false;
   @StorageLink('systemColorMode') systemColorMode: number =
     ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
@@ -34,6 +53,28 @@ export default struct HistoryPage {
   private readonly listStyle = getHistoryListStyleSpec();
   private currentPage: number = 1;
   private loadSeq: number = 0;
+  private progressTime: number = 0;
+  private progressBytes: number = 0;
+  private readonly historyScroller: Scroller = new Scroller();
+
+  private t(value: string): string {
+    return LocalizationUtil.text(value, this.appLanguage, this.systemLanguage);
+  }
+
+  private isWideLayout(): boolean {
+    return this.viewportWidth >= 760 && this.viewportWidth > this.viewportHeight;
+  }
+
+  private updateDownloadProgress(received: number, total: number): void {
+    const now = Date.now();
+    const elapsed = now - this.progressTime;
+    if (elapsed < 350 && (total === 0 || received < total)) return;
+    this.downloadSpeed = elapsed > 0 ? Math.max(0, (received - this.progressBytes) * 1000 / elapsed) : 0;
+    this.downloadReceived = received;
+    this.downloadTotal = total > 0 ? total : this.downloadTotal;
+    this.progressTime = now;
+    this.progressBytes = received;
+  }
 
   private getPalette(): ThemePalette {
     return ThemeUtil.getPalette(
@@ -43,14 +84,31 @@ export default struct HistoryPage {
     );
   }
 
+  private buttonEffect(id: string): VisualEffect | undefined {
+    return InteractionEffectUtil.button(this.pressedButton === id, this.useHdsEffects);
+  }
+
+  private cardEffect(): VisualEffect | undefined {
+    return InteractionEffectUtil.card(this.useHdsEffects);
+  }
+
+  private updatePress(id: string, event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.pressedButton = id;
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (this.pressedButton === id) this.pressedButton = '';
+    }
+  }
+
   private showActionToast(message: string, duration: number = 1600): void {
     this.getUIContext().getPromptAction().showToast({
-      message: message,
+      message: this.t(message),
       duration: duration
     });
   }
 
   aboutToAppear() {
+    this.useHdsEffects = canIUse('SystemCapability.UIDesign.HDSComponent.Core');
     void this.initializePage();
   }
 
@@ -235,7 +293,8 @@ export default struct HistoryPage {
 
   private async loadImagePreviews(syncService: SyncClipboardService, seq: number): Promise<void> {
     const pending: HistoryViewItem[] = this.historyList.filter((item: HistoryViewItem): boolean =>
-      item.type === 'Image' && !!item.hasData && !item.previewPixelMap
+      item.type === 'Image' && !!item.hasData && !item.previewPixelMap &&
+      (!item.size || item.size <= 4 * 1024 * 1024)
     );
     if (pending.length === 0) return;
 
@@ -320,20 +379,67 @@ export default struct HistoryPage {
     }
   }
 
-  private async handleImageDownload(item: HistoryViewItem): Promise<void> {
+  private async handleFileDownload(item: HistoryViewItem, saveAs: boolean = false,
+    galleryAuthorized: boolean = false): Promise<void> {
+    if (this.downloadActive) return;
+    this.downloadActive = true;
+    this.downloadSaving = false;
+    this.downloadName = item.text || `${item.type}-${item.hash}`;
+    this.downloadReceived = 0;
+    this.downloadTotal = item.size || 0;
+    this.downloadSpeed = 0;
+    this.progressTime = Date.now();
+    this.progressBytes = 0;
     try {
-      const binary = await this.createSyncService().downloadHistoryBinary(`${item.type}-${item.hash}`);
-      const filePath = await ImageUtil.saveBufferToDownloadFile(
-        binary,
-        `${item.type}-${item.hash}`,
-        ImageUtil.guessImageExtension(binary)
-      );
-      const feedback = getHistoryActionFeedback('save-image', true);
-      this.showActionToast(`${feedback.message}: ${filePath}`, feedback.duration);
+      const temporaryPath = UserFileSaveUtil.temporaryDownloadPath();
+      try {
+        const response = await this.createSyncService().downloadHistoryFileToPath(
+          `${item.type}-${item.hash}`, temporaryPath,
+          (received: number, total: number): void => this.updateDownloadProgress(received, total));
+        this.downloadReceived = response.size;
+        this.downloadSaving = true;
+        const fallbackName = item.type === 'Image'
+          ? `Image-${item.hash}${ImageUtil.guessImageExtension(response.prefix)}`
+          : item.type === 'Group' ? `Group-${item.hash}.zip` : `File-${item.hash}.bin`;
+        const fileName = UserFileSaveUtil.suggestedFileName(response, item.text, undefined, fallbackName);
+        const category = UserFileSaveUtil.category(item.type, fileName, response.contentType, response.prefix);
+        if (saveAs) {
+          const uri = await UserFileSaveUtil.saveAs(response, item.text, undefined, fallbackName);
+          if (uri) {
+            this.showActionToast('Saved to selected folder');
+          }
+        } else if (category === 'Image') {
+          if (!galleryAuthorized) {
+            const key = `${item.type}-${item.hash}`;
+            if (!this.galleryFileKeys.includes(key)) {
+              this.galleryFileKeys = this.galleryFileKeys.concat([key]);
+            }
+            this.showActionToast('Tap Save to Gallery');
+          } else {
+            await UserFileSaveUtil.saveToGallery(response, item.text, fallbackName);
+            this.showActionToast('Saved to Gallery');
+          }
+        } else {
+          const saved = await UserFileSaveUtil.saveAutomatically(
+            response, item.type, item.text, undefined, fallbackName);
+          this.showActionToast(`Saved to Download/com.xiebaiyuan.syncclipboard.harmony/云剪/${saved.category}`);
+        }
+      } finally {
+        UserFileSaveUtil.removeTemporaryDownload(temporaryPath);
+      }
     } catch (error) {
-      console.error('[HistoryPage] handleImageDownload error:', JSON.stringify(error));
-      const feedback = getHistoryActionFeedback('save-image', false);
-      this.showActionToast(feedback.message, feedback.duration);
+      console.error('[HistoryPage] handleFileDownload error:', JSON.stringify(error));
+      const message = error instanceof Error ? error.message : String(error);
+      this.showActionToast(`Save failed: ${message}`);
+    }
+    this.downloadActive = false;
+  }
+
+  private handleGalleryAuthorization(item: HistoryViewItem, result: SaveButtonOnClickResult): void {
+    if (result === SaveButtonOnClickResult.SUCCESS) {
+      void this.handleFileDownload(item, false, true);
+    } else {
+      this.showActionToast('Gallery authorization canceled');
     }
   }
 
@@ -354,7 +460,7 @@ export default struct HistoryPage {
     if (this.isLoadingMore) {
       Row() {
         LoadingProgress().width(24).height(24)
-        Text('Loading more...')
+        Text(this.t('Loading more...'))
           .fontSize($r('sys.float.Caption_M'))
           .fontColor(this.getPalette().textSecondary)
           .margin({ left: 8 })
@@ -363,7 +469,7 @@ export default struct HistoryPage {
       .justifyContent(FlexAlign.Center)
       .padding({ top: 12, bottom: 12 })
     } else if (!this.hasMore && this.historyList.length > 0) {
-      Text('No more items')
+      Text(this.t('No more items'))
         .fontSize($r('sys.float.Caption_M'))
         .fontColor(this.getPalette().textSecondary)
         .width('100%')
@@ -373,37 +479,30 @@ export default struct HistoryPage {
   }
 
   build() {
-    Column() {
-      Column() {
-        Text('History')
-          .fontSize($r('sys.float.Title_L'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.getPalette().textPrimary)
-      }
-      .width('90%')
-      .alignItems(HorizontalAlign.Start)
-      .margin({ top: $r('sys.float.padding_level8'), bottom: $r('sys.float.padding_level6') })
-
+    HdsNavigation() {
+      Stack({ alignContent: Alignment.Top }) {
       if (this.isLoading) {
-        LoadingProgress()
-          .width(50)
-          .height(50)
+        LoadingProgress().width(50).height(50).margin({ top: 30 })
       } else if (this.historyList.length === 0) {
-        Text('No history items')
+        Text(this.t('No history items'))
           .fontSize($r('sys.float.Body_M'))
           .fontColor(this.getPalette().textSecondary)
-          .margin({ top: 50 })
+          .margin({ top: 30 })
       } else {
         Refresh({ refreshing: $$this.isRefreshing }) {
-          List({ space: 10 }) {
+          List({ space: 12, scroller: this.historyScroller }) {
             ForEach(this.historyList, (item: HistoryViewItem) => {
               ListItem() {
+                Row() {
                 Column({ space: 8 }) {
                   Row() {
-                    Text(item.type)
+                    Text(this.t(item.type))
                       .fontSize($r('sys.float.Body_S'))
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor(this.getPalette().textPrimary)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(this.getPalette().accent)
+                      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                      .backgroundColor(this.getPalette().accentSoft)
+                      .borderRadius(12)
 
                     Blank()
 
@@ -425,75 +524,210 @@ export default struct HistoryPage {
                         .width('100%')
                         .height(this.listStyle.previewHeight)
                         .objectFit(ImageFit.Contain)
-                        .borderRadius($r('sys.float.corner_radius_level6'))
+                        .borderRadius(16)
                         .backgroundColor(this.getPalette().elevatedBackground)
+                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) =>
+                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
+                        .onClick(() => this.handleItemClick(item))
                     } else {
-                      Text(item.hasData ? '[Image loading...]' : '[Image preview unavailable]')
+                      Text(this.t(item.hasData && item.size && item.size > 4 * 1024 * 1024
+                        ? '[Preview omitted for large image]'
+                        : item.hasData ? '[Image loading...]' : '[Image preview unavailable]'))
                         .fontSize($r('sys.float.Body_M'))
                         .fontColor(this.getPalette().textSecondary)
                         .width('100%')
-                        .padding($r('sys.float.padding_level4'))
+                        .padding(14)
                         .backgroundColor(this.getPalette().elevatedBackground)
-                        .borderRadius($r('sys.float.corner_radius_level6'))
+                        .borderRadius(16)
+                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) =>
+                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
+                        .onClick(() => this.handleItemClick(item))
                     }
                   } else {
-                      Text(item.text || '[No preview]')
+                      Text(item.text || this.t('[No preview]'))
                         .fontSize($r('sys.float.Body_M'))
                         .fontColor(this.getPalette().textPrimary)
                         .width('100%')
+                        .padding(14)
+                        .backgroundColor(this.getPalette().elevatedBackground)
+                        .borderRadius(16)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
                         .maxLines(3)
+                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) =>
+                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
+                        .onClick(() => this.handleItemClick(item))
                   }
 
-                  Row() {
-                    Text(item.size ? `${item.size} bytes` : ' ')
+                  if (item.size) {
+                    Text(LocalizationUtil.formatBytes(item.size))
                       .fontSize($r('sys.float.Caption_M'))
                       .fontColor(this.getPalette().textSecondary)
-                    Blank()
+                  }
 
-                    if (item.type === 'Image' && item.hasData) {
-                      Button('Save', {
-                        type: ButtonType.Capsule,
-                        buttonStyle: ButtonStyleMode.NORMAL,
-                        controlSize: ControlSize.SMALL
-                      })
+                  if (item.type !== 'Text' && item.hasData) {
+                    Row({ space: 8 }) {
+                      Blank()
+                      if (UserFileSaveUtil.isLikelyImage(item.type, item.text) ||
+                        this.galleryFileKeys.includes(`${item.type}-${item.hash}`)) {
+                        Stack() {
+                          SaveButton({
+                            icon: SaveIconStyle.FULL_FILLED,
+                            text: SaveDescription.SAVE_TO_GALLERY,
+                            buttonType: ButtonType.Capsule
+                          })
+                            .height(36)
+                            .fontSize(14)
+                            .iconSize(16)
+                            .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+                            .fontColor(this.getPalette().buttonPrimaryText)
+                            .backgroundColor(this.getPalette().buttonPrimaryBackground)
+                            .onClick((_event: ClickEvent, result: SaveButtonOnClickResult) =>
+                              this.handleGalleryAuthorization(item, result))
+                        }
+                        .borderRadius(18)
+                        .visualEffect(this.buttonEffect(`gallery-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) =>
+                          this.updatePress(`gallery-${item.type}-${item.hash}`, event))
+                      } else {
+                        Button(this.t('Save'), {
+                          type: ButtonType.Capsule,
+                          buttonStyle: ButtonStyleMode.NORMAL,
+                          controlSize: ControlSize.SMALL
+                        })
+                          .height(36)
+                          .fontSize(14)
+                          .fontColor(this.getPalette().buttonPrimaryText)
+                          .backgroundColor(this.getPalette().buttonPrimaryBackground)
+                          .visualEffect(this.buttonEffect(`save-${item.type}-${item.hash}`))
+                          .onTouch((event: TouchEvent) =>
+                            this.updatePress(`save-${item.type}-${item.hash}`, event))
+                          .onClick(() => this.handleFileDownload(item))
+                      }
+                      Button(this.t('Save As'), { type: ButtonType.Capsule, controlSize: ControlSize.SMALL })
+                        .height(36)
+                        .fontSize(14)
                         .fontColor(this.getPalette().buttonSecondaryText)
                         .backgroundColor(this.getPalette().buttonSecondaryBackground)
-                        .onClick(() => this.handleImageDownload(item))
+                        .visualEffect(this.buttonEffect(`saveAs-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) =>
+                          this.updatePress(`saveAs-${item.type}-${item.hash}`, event))
+                        .onClick(() => this.handleFileDownload(item, true))
                     }
+                    .width('100%')
                   }
-                  .width('100%')
+                }
+                .width('90%')
+                .padding(16)
+                .backgroundColor(this.getPalette().pageSurface)
+                .border({ width: 1, color: this.getPalette().borderColor })
+                .borderRadius(24)
+                .shadow({ radius: 14, color: this.getPalette().shadowColor, offsetX: 0, offsetY: 5 })
+                .visualEffect(this.cardEffect())
                 }
                 .width('100%')
-                .padding($r('sys.float.padding_level5'))
-                .backgroundColor(this.getPalette().pageSurface)
-                .borderRadius($r('sys.float.corner_radius_level8'))
-                .shadow({ radius: 6, color: this.getPalette().shadowColor, offsetX: 0, offsetY: 2 })
+                .justifyContent(FlexAlign.Center)
               }
-              .onClick(() => this.handleItemClick(item))
             }, (item: HistoryRecordDto) => `${item.type}-${item.hash}`)
 
             ListItem() {
               this.FooterBuilder()
             }
           }
-          .width('96%')
-          .layoutWeight(1)
+          .width('100%')
+          .height('100%')
+          .lanes(this.isWideLayout() ? 2 : 1, 12)
+          .contentStartOffset(this.downloadActive ? 112 : 16)
+          .contentEndOffset((this.supportsFloatingTabs ? 116 : 16) + this.safeAreaBottom)
+          .clip(false)
           .onReachEnd(() => {
             void this.loadMore();
           })
         }
-        .width('96%')
-        .layoutWeight(1)
+        .width('100%')
+        .height('100%')
+        .clip(false)
         .onRefreshing(() => {
           void this.refresh();
         })
       }
 
+      if (this.downloadActive) {
+        Column({ space: 6 }) {
+          Text(`${this.t(this.downloadSaving ? 'Saving...' : 'Downloading...')} ${this.downloadName}`)
+            .fontSize($r('sys.float.Body_S'))
+            .fontColor(this.getPalette().textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          if (this.downloadTotal > 0) {
+            Progress({ value: Math.min(this.downloadReceived, this.downloadTotal),
+              total: this.downloadTotal, type: ProgressType.Linear })
+              .width('100%')
+              .color(this.getPalette().accent)
+          } else {
+            LoadingProgress().width(20).height(20)
+          }
+          Text(`${LocalizationUtil.formatBytes(this.downloadReceived)}` +
+            (this.downloadTotal > 0 ? ` / ${LocalizationUtil.formatBytes(this.downloadTotal)}` : '') +
+            ` · ${LocalizationUtil.formatBytes(this.downloadSpeed)}/s` +
+            (this.downloadTotal > 0 ? ` · ${Math.min(100, Math.floor(this.downloadReceived * 100 / this.downloadTotal))}%` : ''))
+            .fontSize($r('sys.float.Caption_M'))
+            .fontColor(this.getPalette().textSecondary)
+            .width('100%')
+        }
+        .width('90%')
+        .padding(16)
+        .backgroundColor(this.getPalette().elevatedBackground)
+        .borderRadius(20)
+        .visualEffect(this.cardEffect())
+        .margin({ top: 8 })
+      }
+      }
+      .width('100%')
+      .height('100%')
     }
+    .titleBar({
+      enableComponentSafeArea: true,
+      content: { title: {
+        mainTitle: this.t('History'),
+        subTitle: this.t('Browse and save synced items')
+      } },
+      style: {
+        scrollEffectOpts: { scrollEffectType: this.supportsFloatingTabs
+          ? ScrollEffectType.IMMERSIVE_GRADIENT_BLUR : ScrollEffectType.GRADIENT_BLUR },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: '#00000000' },
+          contentStyle: { titleStyle: {
+            mainTitleColor: this.getPalette().textPrimary,
+            subTitleColor: this.getPalette().textSecondary
+          } }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: this.getPalette().pageBackground },
+          contentStyle: { titleStyle: {
+            mainTitleColor: this.getPalette().textPrimary,
+            subTitleColor: this.getPalette().textSecondary
+          } }
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.FULL)
+    .hideBackButton(true)
+    .mode(NavigationMode.Stack)
+    .bindToScrollable([this.historyScroller])
+    .systemBarStyle(
+      { statusBarContentColor: this.getPalette().isDark ? '#FFFFFF' : '#000000' },
+      { statusBarContentColor: this.getPalette().isDark ? '#FFFFFF' : '#000000' }
+    )
     .width('100%')
     .height('100%')
-    .alignItems(HorizontalAlign.Center)
     .backgroundColor(this.getPalette().pageBackground)
+    .onAreaChange((_oldArea, newArea) => {
+      this.viewportWidth = Number(newArea.width);
+      this.viewportHeight = Number(newArea.height);
+    })
   }
 }

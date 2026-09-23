@@ -19,12 +19,17 @@ ClipLink（中文名：**云剪**）乃 **SyncClipboard 生态之 HarmonyOS 客�
 - HarmonyOS 三页签结构：Home / History / Settings
 - 当前剪贴板预览（文字 / 图片）
 - 上传、下载、前台 Auto Sync
-- 历史记录同步、图片预览、点击复制、图片保存
+- 历史记录同步、图片预览、点击复制、图片及文件保存
 - 本地配置持久化
 - Light / Dark / Auto 主题
+- 参考 HarmonyOS 新版空间化设计更新配色、卡片、标题和底部导航；API 23 及以上使用 HdsTabs 悬浮光感页签及其智感握姿适配，旧系统使用普通底栏
+- 首页和历史记录下载时显示进度、已接收大小和实时速度；服务器未提供总大小时仍显示已接收大小和速度
+- 首页、历史记录和设置页支持简体中文及英文，可在设置中选择跟随系统、简体中文或 English
 - 中英文应用名显示：
   - 中文设备：**云剪**
   - 英文设备：**ClipLink**
+
+首页和历史记录中的图片可点按“保存到图库”；首次使用时系统可能要求授权。音乐、文档和其他附件默认直接保存在 `Download/com.xiebaiyuan.syncclipboard.harmony/云剪/` 下的 `Sounds`、`Documents`、`Other` 分类目录中，无需每次选择位置。这些分类目录位于 **Download 内**，并非系统顶层的 `Sounds` 或 `Documents`。需要自行指定位置时可点按“另存为”。文件下载采用分块接收和临时缓存，保存完成或失败后清理临时文件；最终文件不会回退到应用私有目录。前台 Auto Sync 仍只自动写入文字剪贴板。首页的 Current Clipboard 仅展示本机剪贴板并提供文字上传；Recent Activity 提供立即同步和自动同步开关，最新记录上的复制、保存与另存为操作只作用于该记录。
 
 ## 使用前提
 
@@ -44,8 +49,8 @@ ClipLink（中文名：**云剪**）乃 **SyncClipboard 生态之 HarmonyOS 客�
 
 ### 环境
 
-- HarmonyOS / OpenHarmony SDK API 20
-- DevEco Studio 5.x
+- HarmonyOS SDK API 26 构建，最低兼容 API 20
+- 已安装 HarmonyOS SDK API 26 的 DevEco Studio
 - 已配置本地签名
 
 > `build-profile.json5` 已改为公开仓库安全模板；构建前请先替换为你本地的签名材料。

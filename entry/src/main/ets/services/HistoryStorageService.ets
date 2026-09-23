@@ -150,7 +150,7 @@ export class HistoryStorageService {
 
           records.push({
             hash: hash,
-            type: resultSet.getString(resultSet.getColumnIndex('type')) as 'Text' | 'Image' | 'File',
+            type: resultSet.getString(resultSet.getColumnIndex('type')) as 'Text' | 'Image' | 'File' | 'Group',
             text: resultSet.getString(resultSet.getColumnIndex('text')),
             createTime: resultSet.getString(resultSet.getColumnIndex('createTime')),
             lastModified: resultSet.getString(resultSet.getColumnIndex('lastModified')),

@@ -17,6 +17,7 @@ export class ConfigService {
   private readonly KEY_PASSWORD = 'password';
   private readonly KEY_POLLING_INTERVAL = 'polling_interval';
   private readonly KEY_THEME = 'theme';
+  private readonly KEY_LANGUAGE = 'language';
   private readonly KEY_PREFER_PURE_BLACK_IN_DARK = 'prefer_pure_black_in_dark';
   private readonly KEY_HISTORY_SIZE = 'history_size';
 
@@ -41,6 +42,7 @@ export class ConfigService {
       },
       pollingInterval: 5,
       theme: 'auto',
+      language: 'system',
       preferPureBlackInDark: false,
       maxHistorySize: 100
     };
@@ -48,6 +50,7 @@ export class ConfigService {
 
   private applyRuntimeConfig(config: AppConfig): void {
     AppStorage.setOrCreate('appTheme', config.theme);
+    AppStorage.setOrCreate('appLanguage', config.language);
     AppStorage.setOrCreate('preferPureBlackInDark', config.preferPureBlackInDark);
     AppStorage.setOrCreate('maxHistorySize', config.maxHistorySize);
   }
@@ -91,6 +94,9 @@ export class ConfigService {
       const password = await this.preferences.get(this.KEY_PASSWORD, '') as string;
       const pollingInterval = await this.preferences.get(this.KEY_POLLING_INTERVAL, 5) as number;
       const theme = await this.preferences.get(this.KEY_THEME, 'auto') as string;
+      const storedLanguage = await this.preferences.get(this.KEY_LANGUAGE, 'system') as string;
+      const language = storedLanguage === 'zh-CN' || storedLanguage === 'en-US'
+        ? storedLanguage : 'system';
       const preferPureBlackInDark = await this.preferences.get(
         this.KEY_PREFER_PURE_BLACK_IN_DARK,
         false
@@ -106,6 +112,7 @@ export class ConfigService {
         },
         pollingInterval: pollingInterval,
         theme: theme as 'light' | 'dark' | 'auto',
+        language: language as 'system' | 'zh-CN' | 'en-US',
         preferPureBlackInDark: preferPureBlackInDark,
         maxHistorySize: historySize
       };
@@ -138,6 +145,7 @@ export class ConfigService {
       await this.preferences.put(this.KEY_PASSWORD, config.server.password || '');
       await this.preferences.put(this.KEY_POLLING_INTERVAL, config.pollingInterval);
       await this.preferences.put(this.KEY_THEME, config.theme);
+      await this.preferences.put(this.KEY_LANGUAGE, config.language);
       await this.preferences.put(this.KEY_PREFER_PURE_BLACK_IN_DARK, config.preferPureBlackInDark);
       await this.preferences.put(this.KEY_HISTORY_SIZE, config.maxHistorySize);
 

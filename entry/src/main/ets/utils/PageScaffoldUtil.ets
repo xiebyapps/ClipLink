@@ -91,14 +91,14 @@ export function getSettingsSectionSpecs(): SettingsSectionSpec[] {
     {
       key: 'server',
       title: 'Server Connection',
-      description: 'Keep the endpoint and credentials together in one compact card.',
+      description: 'Connect to your SyncClipboard server.',
       rowCount: 3
     },
     {
       key: 'preferences',
       title: 'Preferences',
-      description: 'Theme, polling, and history retention stay in a standard settings group.',
-      rowCount: 4
+      description: 'Choose how ClipLink looks and syncs.',
+      rowCount: 5
     }
   ];
 }
@@ -125,11 +125,11 @@ export function getResolvedThemeVariant(
 
 export function getBottomTabLayoutSpec(): BottomTabLayoutSpec {
   return {
-    barHeight: 50,
-    itemHeight: 0,
+    barHeight: 68,
+    itemHeight: 54,
     iconSize: 24,
     labelTopMargin: 4,
-    usesSelectedBackground: false,
+    usesSelectedBackground: true,
     usesSystemSafeAreaExpansion: false,
     usesExternalBottomBar: false,
     safeAreaFollowsBarSurface: true,
@@ -147,8 +147,8 @@ export function getSystemSafeAreaInsets(topInset: number, bottomInset: number): 
 
 export function getWindowChromeSpec(): WindowChromeSpec {
   return {
-    usesFullscreenLayout: false,
-    usesTransparentSystemBars: false,
+    usesFullscreenLayout: true,
+    usesTransparentSystemBars: true,
     managesNavigationBar: false
   };
 }

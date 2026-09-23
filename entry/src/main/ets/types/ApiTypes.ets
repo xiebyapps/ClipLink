@@ -22,7 +22,7 @@ export interface ProfileDto {
  */
 export interface HistoryRecordDto {
   hash: string;
-  type: 'Text' | 'Image' | 'File';
+  type: 'Text' | 'Image' | 'File' | 'Group';
   text?: string;
   createTime?: string;
   lastModified?: string;
@@ -78,6 +78,7 @@ export interface AppConfig {
   server: ServerConfig;
   pollingInterval: number;
   theme: 'light' | 'dark' | 'auto';
+  language: 'system' | 'zh-CN' | 'en-US';
   preferPureBlackInDark: boolean;
   maxHistorySize: number;
 }

@@ -1,16 +1,19 @@
 import UIAbility from '@ohos.app.ability.UIAbility';
 import window from '@ohos.window';
 import { AbilityConstant, Configuration, ConfigurationConstant, Want } from '@kit.AbilityKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { ConfigService } from '../services/ConfigService';
 import { PollingController } from '../services/PollingController';
 import { ThemeUtil } from '../utils/ThemeUtil';
+import { LocalizationUtil } from '../utils/LocalizationUtil';
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     console.info('[EntryAbility] onCreate');
     AppStorage.setOrCreate('abilityContext', this.context);
     AppStorage.setOrCreate('historyRefreshToken', 0);
+    AppStorage.setOrCreate('floatingTabsEnabled', deviceInfo.sdkApiVersion >= 23);
+    AppStorage.setOrCreate('systemLanguage', LocalizationUtil.systemLanguage());
     AppStorage.setOrCreate('safeAreaTop', 44);
     AppStorage.setOrCreate('safeAreaBottom', 0);
     this.syncSystemTheme(this.context?.config?.colorMode);
@@ -48,6 +51,7 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     console.info('[EntryAbility] onForeground');
     this.syncSystemTheme(this.context?.config?.colorMode);
+    AppStorage.setOrCreate('systemLanguage', LocalizationUtil.systemLanguage());
     void ThemeUtil.applyStoredTheme();
   }
 
@@ -58,6 +62,7 @@ export default class EntryAbility extends UIAbility {
 
   onConfigurationUpdate(config: Configuration): void {
     this.syncSystemTheme(config.colorMode);
+    AppStorage.setOrCreate('systemLanguage', LocalizationUtil.systemLanguage());
     void ThemeUtil.applyStoredTheme();
   }
 

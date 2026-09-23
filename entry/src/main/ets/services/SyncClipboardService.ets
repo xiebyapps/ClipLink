@@ -1,4 +1,4 @@
-import { HttpClient } from './HttpClient';
+import { HttpClient, BinaryResponse, StreamedBinaryResponse } from './HttpClient';
 import { ProfileDto, HistoryRecordDto, HistoryQueryParams, ClipboardContent, MultipartField } from '../types/ApiTypes';
 import { HashUtil } from '../utils/HashUtil';
 
@@ -200,6 +200,10 @@ export class SyncClipboardService {
    */
   async downloadTextContent(): Promise<string> {
     const profile = await this.getProfile();
+    return await this.downloadTextFromProfile(profile);
+  }
+
+  async downloadTextFromProfile(profile: ProfileDto): Promise<string> {
     if (profile.type === 'Text') {
       if (profile.hasData && profile.hash) {
         return await this.downloadHistoryText(`Text-${profile.hash}`);
@@ -209,12 +213,32 @@ export class SyncClipboardService {
     return '';
   }
 
+  async downloadProfileBinary(profile: ProfileDto): Promise<ArrayBuffer> {
+    return (await this.downloadProfileFile(profile)).buffer;
+  }
+
+  async downloadProfileFile(profile: ProfileDto): Promise<BinaryResponse> {
+    if (!profile.hasData || !profile.dataName) {
+      throw new Error('Clipboard file data is unavailable');
+    }
+    return await this.httpClient.getBinary(`/file/${encodeURIComponent(profile.dataName)}`);
+  }
+
   async downloadHistoryText(profileId: string): Promise<string> {
     return await this.httpClient.getText(`/api/history/${profileId}/data`);
   }
 
   async downloadHistoryBinary(profileId: string): Promise<ArrayBuffer> {
     return await this.httpClient.getArrayBuffer(`/api/history/${profileId}/data`);
+  }
+
+  async downloadHistoryFile(profileId: string): Promise<BinaryResponse> {
+    return await this.httpClient.getBinary(`/api/history/${profileId}/data`);
+  }
+
+  async downloadHistoryFileToPath(profileId: string, targetPath: string,
+    onProgress?: (received: number, total: number) => void): Promise<StreamedBinaryResponse> {
+    return await this.httpClient.getBinaryToFile(`/api/history/${profileId}/data`, targetPath, onProgress);
   }
 
   /**
