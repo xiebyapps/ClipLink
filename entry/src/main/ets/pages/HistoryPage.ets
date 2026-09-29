@@ -1,33 +1,34 @@
+import { RecordCacheService } from '../services/RecordCacheService';
+import { DownloadNoticeService } from '../services/DownloadNoticeService';
+import { RecordPreviewPanel } from '../components/RecordPreviewPanel';
+import { RecordPreviewSession } from '../services/RecordPreviewSession';
 import { HistoryRecordDto } from '../types/ApiTypes';
 import { HistoryStorageService } from '../services/HistoryStorageService';
 import { SyncClipboardService } from '../services/SyncClipboardService';
 import { ConfigService } from '../services/ConfigService';
-import { ClipboardUtil } from '../utils/ClipboardUtil';
 import { ConfigurationConstant } from '@kit.AbilityKit';
-import { image } from '@kit.ImageKit';
 import { ImageUtil } from '../utils/ImageUtil';
 import { UserFileSaveUtil } from '../utils/UserFileSaveUtil';
 import { LocalizationUtil } from '../utils/LocalizationUtil';
 import { InteractionEffectUtil } from '../utils/InteractionEffectUtil';
 import { ThemeUtil, ThemePalette } from '../utils/ThemeUtil';
-import { getHistoryActionFeedback, getHistoryListStyleSpec } from '../utils/PageScaffoldUtil';
+import { FileRecordDisplayUtil } from '../utils/FileRecordDisplayUtil';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType } from '@kit.UIDesignKit';
 
-interface HistoryViewItem extends HistoryRecordDto {
-  previewPixelMap?: image.PixelMap;
-}
-
 const PAGE_SIZE = 30;
-const PREVIEW_CONCURRENCY = 3;
 
 @Component
 export default struct HistoryPage {
-  @State historyList: HistoryViewItem[] = [];
+  @State previewVisible: boolean = false;
+  private previewSession?: RecordPreviewSession;
+  @State historyList: HistoryRecordDto[] = [];
   @State isLoading: boolean = false;
   @State isRefreshing: boolean = false;
   @State isLoadingMore: boolean = false;
   @State hasMore: boolean = true;
   @State galleryFileKeys: string[] = [];
+  @State copyActive: boolean = false;
+  @State favoriteKeys: string[] = [];
   @State downloadActive: boolean = false;
   @State downloadSaving: boolean = false;
   @State downloadName: string = '';
@@ -40,6 +41,10 @@ export default struct HistoryPage {
   @State pressedButton: string = '';
   @StorageLink('historyRefreshToken') @Watch('handleHistoryRefreshTokenChange')
   historyRefreshToken: number = 0;
+  @StorageLink('historyMetadataRevision') @Watch('handleHistoryMetadataChange')
+  historyMetadataRevision: number = 0;
+  @StorageLink('serverRevision') @Watch('handleServerRevisionChange') serverRevision: number = 0;
+  @StorageLink('maxHistorySize') @Watch('handleHistoryLimitChange') maxHistorySize: number = 100;
   @StorageLink('appTheme') appTheme: string = 'auto';
   @StorageLink('floatingTabsEnabled') supportsFloatingTabs: boolean = false;
   @StorageLink('safeAreaBottom') safeAreaBottom: number = 0;
@@ -50,15 +55,32 @@ export default struct HistoryPage {
     ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
 
   private storageService: HistoryStorageService = HistoryStorageService.getInstance();
-  private readonly listStyle = getHistoryListStyleSpec();
   private currentPage: number = 1;
   private loadSeq: number = 0;
   private progressTime: number = 0;
   private progressBytes: number = 0;
+  private downloadNoticeId: number = 0;
   private readonly historyScroller: Scroller = new Scroller();
+
+  @Builder
+  private previewPanel() {
+    if (this.previewSession) {
+      RecordPreviewPanel({ session: this.previewSession })
+    }
+  }
+
+  private closePreviewPanel(): void {
+    this.previewVisible = false;
+    this.previewSession?.close();
+    this.previewSession = undefined;
+  }
 
   private t(value: string): string {
     return LocalizationUtil.text(value, this.appLanguage, this.systemLanguage);
+  }
+
+  private activeServerId(): string {
+    return ConfigService.getInstance().getConfig().activeServerId;
   }
 
   private isWideLayout(): boolean {
@@ -66,6 +88,7 @@ export default struct HistoryPage {
   }
 
   private updateDownloadProgress(received: number, total: number): void {
+    DownloadNoticeService.progress(this.downloadNoticeId, received, total);
     const now = Date.now();
     const elapsed = now - this.progressTime;
     if (elapsed < 350 && (total === 0 || received < total)) return;
@@ -113,19 +136,31 @@ export default struct HistoryPage {
   }
 
   aboutToDisappear() {
-    this.releasePreviewImages();
+    this.closePreviewPanel();
+    this.loadSeq++;
   }
 
   private handleHistoryRefreshTokenChange(): void {
     void this.refresh();
   }
 
-  private createSyncService(): SyncClipboardService {
+  private handleServerRevisionChange(): void {
+    this.closePreviewPanel();
+    this.loadSeq++;
+    this.isLoadingMore = false;
+    this.historyList = [];
+    void this.refresh();
+  }
+
+  private createSyncService(serverId?: string): SyncClipboardService {
     const config = ConfigService.getInstance().getConfig();
+    const server = serverId
+      ? config.servers.find((item) => item.id === serverId) || config.server : config.server;
+    if (!server) throw new Error('No available server');
     return new SyncClipboardService(
-      config.server.url,
-      config.server.username,
-      config.server.password
+      server.url,
+      server.username,
+      server.password
     );
   }
 
@@ -138,7 +173,11 @@ export default struct HistoryPage {
     if (this.isLoadingMore) {
       return;
     }
+    if (!ConfigService.getInstance().getActiveServer()) {
+      this.historyList = []; this.hasMore = false; this.isLoading = false; this.isRefreshing = false; return;
+    }
     const seq = ++this.loadSeq;
+    const serverId = ConfigService.getInstance().getConfig().activeServerId;
     if (!this.isRefreshing) {
       this.isLoading = true;
     }
@@ -146,28 +185,27 @@ export default struct HistoryPage {
     this.hasMore = true;
 
     try {
-      const syncService = this.createSyncService();
+      const syncService = this.createSyncService(serverId);
 
       // 1. Local first for instant UI
-      const localRecords = await this.storageService.queryRecords(PAGE_SIZE, 0);
-      if (seq !== this.loadSeq) return;
+      const localRecords = await this.storageService.queryRecords(PAGE_SIZE, 0, serverId);
+      if (seq !== this.loadSeq || serverId !== ConfigService.getInstance().getConfig().activeServerId) return;
       this.setHistoryRecords(localRecords, false);
-      void this.loadImagePreviews(syncService, seq);
 
       // 2. Server first page
       const serverRecords = await syncService.queryHistoryPage(1);
-      if (seq !== this.loadSeq) return;
+      if (seq !== this.loadSeq || serverId !== ConfigService.getInstance().getConfig().activeServerId) return;
 
       for (const record of serverRecords) {
-        await this.storageService.upsertRecord(record);
+        await this.storageService.upsertRecord(record, serverId);
       }
       if (seq !== this.loadSeq) return;
 
-      const merged = await this.storageService.queryRecords(PAGE_SIZE, 0);
+      const merged = await this.storageService.queryRecords(PAGE_SIZE, 0, serverId);
       if (seq !== this.loadSeq) return;
       this.setHistoryRecords(merged, false);
-      this.hasMore = serverRecords.length >= PAGE_SIZE || merged.length >= PAGE_SIZE;
-      void this.loadImagePreviews(syncService, seq);
+      this.hasMore = merged.length < this.maxHistorySize &&
+        (serverRecords.length >= PAGE_SIZE || merged.length >= PAGE_SIZE);
     } catch (error) {
       console.error('[HistoryPage] refresh error:', JSON.stringify(error));
     } finally {
@@ -182,25 +220,28 @@ export default struct HistoryPage {
     if (this.isLoadingMore || this.isRefreshing || !this.hasMore) {
       return;
     }
+    if (this.historyList.length >= this.maxHistorySize) { this.hasMore = false; return; }
     this.isLoadingMore = true;
     const seq = this.loadSeq;
+    const serverId = ConfigService.getInstance().getConfig().activeServerId;
     const nextPage = this.currentPage + 1;
 
     try {
-      const syncService = this.createSyncService();
+      const syncService = this.createSyncService(serverId);
       const serverRecords = await syncService.queryHistoryPage(nextPage);
-      if (seq !== this.loadSeq) return;
+      if (seq !== this.loadSeq || serverId !== ConfigService.getInstance().getConfig().activeServerId) return;
 
       if (serverRecords.length > 0) {
         for (const record of serverRecords) {
-          await this.storageService.upsertRecord(record);
+          await this.storageService.upsertRecord(record, serverId);
         }
       }
       if (seq !== this.loadSeq) return;
 
       const localPage = await this.storageService.queryRecords(
         PAGE_SIZE,
-        this.historyList.length
+        this.historyList.length,
+        serverId
       );
       if (seq !== this.loadSeq) return;
 
@@ -209,10 +250,10 @@ export default struct HistoryPage {
       } else {
         this.appendHistoryRecords(localPage);
         this.currentPage = nextPage;
-        if (serverRecords.length < PAGE_SIZE && localPage.length < PAGE_SIZE) {
+        if (this.historyList.length >= this.maxHistorySize ||
+          (serverRecords.length < PAGE_SIZE && localPage.length < PAGE_SIZE)) {
           this.hasMore = false;
         }
-        void this.loadImagePreviews(syncService, seq);
       }
     } catch (error) {
       console.error('[HistoryPage] loadMore error:', JSON.stringify(error));
@@ -224,34 +265,15 @@ export default struct HistoryPage {
   }
 
   private setHistoryRecords(records: HistoryRecordDto[], append: boolean): void {
-    const existing = new Map<string, image.PixelMap>();
-    const keepKeys = new Set<string>();
-    records.forEach((r: HistoryRecordDto): void => {
-      keepKeys.add(`${r.type}-${r.hash}`);
-    });
-
-    this.historyList.forEach((item: HistoryViewItem): void => {
-      const key = `${item.type}-${item.hash}`;
-      if (item.previewPixelMap) {
-        if (keepKeys.has(key) || append) {
-          existing.set(key, item.previewPixelMap);
-        } else {
-          void item.previewPixelMap.release();
-        }
-      }
-    });
-
-    const mapped: HistoryViewItem[] = records.map((record: HistoryRecordDto) =>
-      this.createHistoryViewItem(record, existing.get(`${record.type}-${record.hash}`))
-    );
+    const mapped = records.slice(0, this.maxHistorySize);
 
     if (append) {
       const seen = new Set<string>();
-      this.historyList.forEach((item: HistoryViewItem): void => {
+      this.historyList.forEach((item: HistoryRecordDto): void => {
         seen.add(`${item.type}-${item.hash}`);
       });
-      const appended: HistoryViewItem[] = [];
-      mapped.forEach((item: HistoryViewItem): void => {
+      const appended: HistoryRecordDto[] = [];
+      mapped.forEach((item: HistoryRecordDto): void => {
         const key = `${item.type}-${item.hash}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -259,7 +281,7 @@ export default struct HistoryPage {
         }
       });
       if (appended.length > 0) {
-        this.historyList = this.historyList.concat(appended);
+        this.historyList = this.historyList.concat(appended).slice(0, this.maxHistorySize);
       }
     } else {
       this.historyList = mapped;
@@ -270,134 +292,81 @@ export default struct HistoryPage {
     this.setHistoryRecords(records, true);
   }
 
-  private createHistoryViewItem(
-    record: HistoryRecordDto,
-    previewPixelMap?: image.PixelMap
-  ): HistoryViewItem {
-    return {
-      hash: record.hash,
-      type: record.type,
-      text: record.text,
-      createTime: record.createTime,
-      lastModified: record.lastModified,
-      lastAccessed: record.lastAccessed,
-      starred: record.starred,
-      pinned: record.pinned,
-      size: record.size,
-      hasData: record.hasData,
-      version: record.version,
-      isDeleted: record.isDeleted,
-      previewPixelMap: previewPixelMap
-    };
+  private async handleHistoryMetadataChange(): Promise<void> {
+    const serverId = ConfigService.getInstance().getConfig().activeServerId;
+    const seq = this.loadSeq;
+    const records = await this.storageService.queryRecords(Math.max(PAGE_SIZE, this.historyList.length), 0, serverId);
+    if (seq !== this.loadSeq || serverId !== ConfigService.getInstance().getConfig().activeServerId) return;
+    this.setHistoryRecords(records, false);
   }
 
-  private async loadImagePreviews(syncService: SyncClipboardService, seq: number): Promise<void> {
-    const pending: HistoryViewItem[] = this.historyList.filter((item: HistoryViewItem): boolean =>
-      item.type === 'Image' && !!item.hasData && !item.previewPixelMap &&
-      (!item.size || item.size <= 4 * 1024 * 1024)
-    );
-    if (pending.length === 0) return;
-
-    let cursor = 0;
-    const worker = async (): Promise<void> => {
-      while (cursor < pending.length) {
-        if (seq !== this.loadSeq) return;
-        const item = pending[cursor++];
-        try {
-          const buffer = await syncService.downloadHistoryBinary(`${item.type}-${item.hash}`);
-          if (seq !== this.loadSeq) return;
-          const pixelMap = await ImageUtil.createPixelMapFromBuffer(buffer);
-          if (seq !== this.loadSeq) {
-            void pixelMap.release();
-            return;
-          }
-          this.applyPreview(item.type, item.hash, pixelMap);
-        } catch (error) {
-          console.error('[HistoryPage] loadImagePreviews error:', JSON.stringify(error));
-        }
-      }
-    };
-
-    const workerCount = Math.min(PREVIEW_CONCURRENCY, pending.length);
-    const workers: Promise<void>[] = [];
-    for (let i = 0; i < workerCount; i++) {
-      workers.push(worker());
-    }
-    await Promise.all(workers);
+  private handleHistoryLimitChange(): void {
+    this.loadSeq++;
+    this.isLoadingMore = false;
+    void this.refresh();
   }
 
-  private applyPreview(type: string, hash: string, pixelMap: image.PixelMap): void {
-    const idx = this.historyList.findIndex((i: HistoryViewItem): boolean =>
-      i.type === type && i.hash === hash
-    );
-    if (idx < 0) {
-      void pixelMap.release();
-      return;
-    }
-    const current = this.historyList[idx];
-    if (current.previewPixelMap) {
-      void pixelMap.release();
-      return;
-    }
-    const next: HistoryViewItem[] = this.historyList.slice();
-    next[idx] = this.createHistoryViewItem(current, pixelMap);
-    this.historyList = next;
-  }
-
-  private releasePreviewImages(): void {
-    this.historyList.forEach((item: HistoryViewItem): void => {
-      void item.previewPixelMap?.release();
-    });
-  }
-
-  private async handleItemClick(item: HistoryViewItem) {
+  private async toggleFavorite(item: HistoryRecordDto): Promise<void> {
+    const serverId = ConfigService.getInstance().getConfig().activeServerId;
+    const key = `${serverId}:${item.type}-${item.hash}`;
+    if (this.favoriteKeys.includes(key)) return;
+    this.favoriteKeys = this.favoriteKeys.concat([key]);
     try {
-      if (item.type === 'Text') {
-        const text = item.hasData
-          ? await this.createSyncService().downloadHistoryText(`Text-${item.hash}`)
-          : (item.text || '');
-        await ClipboardUtil.setClipboardText(text);
-        const feedback = getHistoryActionFeedback('copy-text', true);
-        this.showActionToast(feedback.message, feedback.duration);
-        return;
+      const updated = await this.createSyncService(serverId).setHistoryStarred(item, !item.starred);
+      await this.storageService.upsertRecord(updated, serverId);
+      if (serverId === ConfigService.getInstance().getConfig().activeServerId) {
+        this.historyList = this.historyList.map((record: HistoryRecordDto): HistoryRecordDto =>
+          record.type === updated.type && record.hash === updated.hash ? updated : record);
+        this.showActionToast(updated.starred ? 'Added to favorites' : 'Removed from favorites');
       }
-
-      if (item.type === 'Image' && item.hasData) {
-        const binary = await this.createSyncService().downloadHistoryBinary(`Image-${item.hash}`);
-        const pixelMap = item.previewPixelMap ?? await ImageUtil.createPixelMapFromBuffer(binary);
-        await ClipboardUtil.setClipboardImage(pixelMap);
-        const feedback = getHistoryActionFeedback('copy-image', true);
-        this.showActionToast(feedback.message, feedback.duration);
-        if (!item.previewPixelMap) {
-          void pixelMap.release();
-        }
-      }
+      AppStorage.setOrCreate('historyMetadataRevision',
+        (AppStorage.get<number>('historyMetadataRevision') || 0) + 1);
     } catch (error) {
-      console.error('[HistoryPage] handleItemClick error:', JSON.stringify(error));
-      const feedback = getHistoryActionFeedback('copy-text', false);
-      this.showActionToast(feedback.message, feedback.duration);
+      this.showActionToast(`Favorite Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.favoriteKeys = this.favoriteKeys.filter((pending: string): boolean => pending !== key);
     }
   }
 
-  private async handleFileDownload(item: HistoryViewItem, saveAs: boolean = false,
+  private handleItemClick(item: HistoryRecordDto): void {
+    if (this.previewVisible || this.downloadActive || this.copyActive) return;
+    this.previewSession = new RecordPreviewSession(item);
+    this.previewVisible = true;
+  }
+
+  private async handleFileDownload(item: HistoryRecordDto, saveAs: boolean = false,
     galleryAuthorized: boolean = false): Promise<void> {
-    if (this.downloadActive) return;
+    if (this.downloadActive || this.copyActive) return;
+    const cached = RecordPreviewSession.cached(item);
+    if (cached) {
+      try { this.showActionToast(await cached.save(saveAs, galleryAuthorized)); }
+      catch (error) { this.showActionToast(`Save failed: ${error instanceof Error ? error.message : String(error)}`); }
+      return;
+    }
     this.downloadActive = true;
     this.downloadSaving = false;
     this.downloadName = item.text || `${item.type}-${item.hash}`;
     this.downloadReceived = 0;
     this.downloadTotal = item.size || 0;
     this.downloadSpeed = 0;
+    this.downloadNoticeId = DownloadNoticeService.begin(this.downloadName, this.downloadTotal);
     this.progressTime = Date.now();
     this.progressBytes = 0;
+    const serverId = ConfigService.getInstance().getConfig().activeServerId;
+    let downloadResult: string = 'Download complete';
+    let downloadFailed: boolean = false;
     try {
-      const temporaryPath = UserFileSaveUtil.temporaryDownloadPath();
+      const lease = await RecordCacheService.getInstance().acquire(item, serverId, this.createSyncService(serverId),
+        (received: number, total: number): void => this.updateDownloadProgress(received, total));
       try {
-        const response = await this.createSyncService().downloadHistoryFileToPath(
-          `${item.type}-${item.hash}`, temporaryPath,
-          (received: number, total: number): void => this.updateDownloadProgress(received, total));
+        const response = lease.response;
+        if (serverId !== ConfigService.getInstance().getConfig().activeServerId) {
+          throw new Error('Server changed during operation');
+        }
         this.downloadReceived = response.size;
         this.downloadSaving = true;
+        DownloadNoticeService.progress(this.downloadNoticeId, response.size, response.size);
+        DownloadNoticeService.status(this.downloadNoticeId, 'Saving...');
         const fallbackName = item.type === 'Image'
           ? `Image-${item.hash}${ImageUtil.guessImageExtension(response.prefix)}`
           : item.type === 'Group' ? `Group-${item.hash}.zip` : `File-${item.hash}.bin`;
@@ -405,6 +374,7 @@ export default struct HistoryPage {
         const category = UserFileSaveUtil.category(item.type, fileName, response.contentType, response.prefix);
         if (saveAs) {
           const uri = await UserFileSaveUtil.saveAs(response, item.text, undefined, fallbackName);
+          downloadResult = uri ? 'Saved to selected folder' : 'Save canceled';
           if (uri) {
             this.showActionToast('Saved to selected folder');
           }
@@ -414,28 +384,35 @@ export default struct HistoryPage {
             if (!this.galleryFileKeys.includes(key)) {
               this.galleryFileKeys = this.galleryFileKeys.concat([key]);
             }
-            this.showActionToast('Tap Save to Gallery');
+            downloadResult = 'Tap Save to Gallery';
+            this.showActionToast(downloadResult);
           } else {
             await UserFileSaveUtil.saveToGallery(response, item.text, fallbackName);
-            this.showActionToast('Saved to Gallery');
+            downloadResult = 'Saved to Gallery';
+            this.showActionToast(downloadResult);
           }
         } else {
           const saved = await UserFileSaveUtil.saveAutomatically(
             response, item.type, item.text, undefined, fallbackName);
-          this.showActionToast(`Saved to Download/com.xiebaiyuan.syncclipboard.harmony/云剪/${saved.category}`);
+          downloadResult = UserFileSaveUtil.savedMessage(saved);
+          this.showActionToast(downloadResult);
         }
       } finally {
-        UserFileSaveUtil.removeTemporaryDownload(temporaryPath);
+        lease.release();
       }
     } catch (error) {
       console.error('[HistoryPage] handleFileDownload error:', JSON.stringify(error));
       const message = error instanceof Error ? error.message : String(error);
-      this.showActionToast(`Save failed: ${message}`);
+      downloadFailed = true;
+      downloadResult = `Save failed: ${message}`;
+      this.showActionToast(downloadResult);
     }
+    DownloadNoticeService.finish(this.downloadNoticeId, downloadResult, downloadFailed);
+    this.downloadNoticeId = 0;
     this.downloadActive = false;
   }
 
-  private handleGalleryAuthorization(item: HistoryViewItem, result: SaveButtonOnClickResult): void {
+  private handleGalleryAuthorization(item: HistoryRecordDto, result: SaveButtonOnClickResult): void {
     if (result === SaveButtonOnClickResult.SUCCESS) {
       void this.handleFileDownload(item, false, true);
     } else {
@@ -445,14 +422,15 @@ export default struct HistoryPage {
 
   private formatDate(dateStr?: string): string {
     if (!dateStr) {
-      return '';
+      return '—';
     }
-    try {
-      const date = new Date(dateStr);
-      return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
-    } catch (error) {
-      return dateStr;
-    }
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return '—';
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${month}/${day} ${hours}:${minutes}`;
   }
 
   @Builder
@@ -491,81 +469,77 @@ export default struct HistoryPage {
       } else {
         Refresh({ refreshing: $$this.isRefreshing }) {
           List({ space: 12, scroller: this.historyScroller }) {
-            ForEach(this.historyList, (item: HistoryViewItem) => {
+            ForEach(this.historyList, (item: HistoryRecordDto) => {
               ListItem() {
                 Row() {
                 Column({ space: 8 }) {
                   Row() {
-                    Text(this.t(item.type))
-                      .fontSize($r('sys.float.Body_S'))
-                      .fontWeight(FontWeight.Bold)
+                    Row() {
+                      Text(this.t(item.type))
+                      .fontSize($r('sys.float.Caption_M'))
                       .fontColor(this.getPalette().accent)
-                      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                      .padding({
+                        left: $r('sys.float.padding_level4'),
+                        right: $r('sys.float.padding_level4'),
+                        top: $r('sys.float.padding_level2'),
+                        bottom: $r('sys.float.padding_level2')
+                      })
                       .backgroundColor(this.getPalette().accentSoft)
-                      .borderRadius(12)
-
-                    Blank()
-
-                    if (item.starred) {
-                      Text('★')
-                        .fontSize($r('sys.float.Body_L'))
-                        .fontColor('#FFD700')
+                      .borderRadius($r('sys.float.corner_radius_level6'))
                     }
-
-                    Text(this.formatDate(item.lastAccessed))
+                    .layoutWeight(1)
+                    Text(item.size !== undefined ? LocalizationUtil.formatBytes(item.size) : '—')
                       .fontSize($r('sys.float.Caption_M'))
                       .fontColor(this.getPalette().textSecondary)
+                      .textAlign(TextAlign.Center)
+                      .layoutWeight(1)
+                    Row({ space: 0 }) {
+                      Text(this.formatDate(item.lastAccessed))
+                        .fontSize($r('sys.float.Caption_M'))
+                        .minFontSize(10)
+                        .maxFontSize($r('sys.float.Caption_M'))
+                        .maxLines(1)
+                        .fontColor(this.getPalette().textSecondary)
+                        .textAlign(TextAlign.End)
+                        .layoutWeight(1)
+                      Button(item.starred ? '★' : '☆', { type: ButtonType.Circle })
+                        .width(32)
+                        .height(32)
+                        .fontSize(22)
+                        .fontColor(item.starred ? (this.getPalette().isDark ? '#FFD873' : '#9C6800')
+                          : this.getPalette().textSecondary)
+                        .backgroundColor(Color.Transparent)
+                        .accessibilityText(this.t(item.starred ? 'Remove from favorites' : 'Add to favorites'))
+                        .enabled(!this.favoriteKeys.includes(`${this.activeServerId()}:${item.type}-${item.hash}`))
+                        .visualEffect(this.buttonEffect(`favorite-${item.type}-${item.hash}`))
+                        .onTouch((event: TouchEvent) => this.updatePress(`favorite-${item.type}-${item.hash}`, event))
+                        .onClick(() => { void this.toggleFavorite(item); })
+                    }
+                    .justifyContent(FlexAlign.End)
+                    .layoutWeight(1)
                   }
                   .width('100%')
 
-                  if (item.type === 'Image') {
-                    if (item.previewPixelMap) {
-                      Image(item.previewPixelMap)
-                        .width('100%')
-                        .height(this.listStyle.previewHeight)
-                        .objectFit(ImageFit.Contain)
-                        .borderRadius(16)
-                        .backgroundColor(this.getPalette().elevatedBackground)
-                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
-                        .onTouch((event: TouchEvent) =>
-                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
-                        .onClick(() => this.handleItemClick(item))
-                    } else {
-                      Text(this.t(item.hasData && item.size && item.size > 4 * 1024 * 1024
-                        ? '[Preview omitted for large image]'
-                        : item.hasData ? '[Image loading...]' : '[Image preview unavailable]'))
-                        .fontSize($r('sys.float.Body_M'))
-                        .fontColor(this.getPalette().textSecondary)
-                        .width('100%')
-                        .padding(14)
-                        .backgroundColor(this.getPalette().elevatedBackground)
-                        .borderRadius(16)
-                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
-                        .onTouch((event: TouchEvent) =>
-                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
-                        .onClick(() => this.handleItemClick(item))
-                    }
-                  } else {
-                      Text(item.text || this.t('[No preview]'))
-                        .fontSize($r('sys.float.Body_M'))
-                        .fontColor(this.getPalette().textPrimary)
-                        .width('100%')
-                        .padding(14)
-                        .backgroundColor(this.getPalette().elevatedBackground)
-                        .borderRadius(16)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-                        .maxLines(3)
-                        .visualEffect(this.buttonEffect(`preview-${item.type}-${item.hash}`))
-                        .onTouch((event: TouchEvent) =>
-                          this.updatePress(`preview-${item.type}-${item.hash}`, event))
-                        .onClick(() => this.handleItemClick(item))
+                  Row({ space: 12 }) {
+                    Image(FileRecordDisplayUtil.icon(item))
+                      .width(28)
+                      .height(28)
+                      .fillColor(this.getPalette().accent)
+                      .accessibilityText(this.t(item.type))
+                    Text(FileRecordDisplayUtil.text(item, this.appLanguage, this.systemLanguage))
+                      .fontSize($r('sys.float.Body_M'))
+                      .fontColor(this.getPalette().textPrimary)
+                      .layoutWeight(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .maxLines(3)
                   }
-
-                  if (item.size) {
-                    Text(LocalizationUtil.formatBytes(item.size))
-                      .fontSize($r('sys.float.Caption_M'))
-                      .fontColor(this.getPalette().textSecondary)
-                  }
+                  .width('100%')
+                  .padding(14)
+                  .backgroundColor(item.starred ? Color.Transparent : this.getPalette().elevatedBackground)
+                  .borderRadius(16)
+                  .visualEffect(this.buttonEffect(`content-${item.type}-${item.hash}`))
+                  .onTouch((event: TouchEvent) => this.updatePress(`content-${item.type}-${item.hash}`, event))
+                  .onClick(() => { void this.handleItemClick(item); })
 
                   if (item.type !== 'Text' && item.hasData) {
                     Row({ space: 8 }) {
@@ -621,7 +595,7 @@ export default struct HistoryPage {
                 }
                 .width('90%')
                 .padding(16)
-                .backgroundColor(this.getPalette().pageSurface)
+                .backgroundColor(FileRecordDisplayUtil.cardBackground(item, this.getPalette().isDark, this.getPalette().pageSurface))
                 .border({ width: 1, color: this.getPalette().borderColor })
                 .borderRadius(24)
                 .shadow({ radius: 14, color: this.getPalette().shadowColor, offsetX: 0, offsetY: 5 })
@@ -630,7 +604,8 @@ export default struct HistoryPage {
                 .width('100%')
                 .justifyContent(FlexAlign.Center)
               }
-            }, (item: HistoryRecordDto) => `${item.type}-${item.hash}`)
+            }, (item: HistoryRecordDto) =>
+              `${item.type}-${item.hash}-${item.version || 0}-${item.lastAccessed || ''}-${item.starred ? 1 : 0}`)
 
             ListItem() {
               this.FooterBuilder()
@@ -639,7 +614,9 @@ export default struct HistoryPage {
           .width('100%')
           .height('100%')
           .lanes(this.isWideLayout() ? 2 : 1, 12)
-          .contentStartOffset(this.downloadActive ? 112 : 16)
+          // Keep cards behind the translucent title bar drawing outside the List viewport.
+          .cachedCount(4, true)
+          .contentStartOffset(16)
           .contentEndOffset((this.supportsFloatingTabs ? 116 : 16) + this.safeAreaBottom)
           .clip(false)
           .onReachEnd(() => {
@@ -654,37 +631,7 @@ export default struct HistoryPage {
         })
       }
 
-      if (this.downloadActive) {
-        Column({ space: 6 }) {
-          Text(`${this.t(this.downloadSaving ? 'Saving...' : 'Downloading...')} ${this.downloadName}`)
-            .fontSize($r('sys.float.Body_S'))
-            .fontColor(this.getPalette().textPrimary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-          if (this.downloadTotal > 0) {
-            Progress({ value: Math.min(this.downloadReceived, this.downloadTotal),
-              total: this.downloadTotal, type: ProgressType.Linear })
-              .width('100%')
-              .color(this.getPalette().accent)
-          } else {
-            LoadingProgress().width(20).height(20)
-          }
-          Text(`${LocalizationUtil.formatBytes(this.downloadReceived)}` +
-            (this.downloadTotal > 0 ? ` / ${LocalizationUtil.formatBytes(this.downloadTotal)}` : '') +
-            ` · ${LocalizationUtil.formatBytes(this.downloadSpeed)}/s` +
-            (this.downloadTotal > 0 ? ` · ${Math.min(100, Math.floor(this.downloadReceived * 100 / this.downloadTotal))}%` : ''))
-            .fontSize($r('sys.float.Caption_M'))
-            .fontColor(this.getPalette().textSecondary)
-            .width('100%')
-        }
-        .width('90%')
-        .padding(16)
-        .backgroundColor(this.getPalette().elevatedBackground)
-        .borderRadius(20)
-        .visualEffect(this.cardEffect())
-        .margin({ top: 8 })
-      }
+
       }
       .width('100%')
       .height('100%')
@@ -717,6 +664,14 @@ export default struct HistoryPage {
     .titleMode(HdsNavigationTitleMode.FULL)
     .hideBackButton(true)
     .mode(NavigationMode.Stack)
+    .bindSheet($$this.previewVisible, this.previewPanel(), {
+      height: SheetSize.MEDIUM,
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+      preferType: this.viewportWidth >= 600 ? SheetType.CENTER : SheetType.BOTTOM,
+      showClose: true,
+      backgroundColor: this.getPalette().pageSurface,
+      onDisappear: () => this.closePreviewPanel()
+    })
     .bindToScrollable([this.historyScroller])
     .systemBarStyle(
       { statusBarContentColor: this.getPalette().isDark ? '#FFFFFF' : '#000000' },

@@ -33,6 +33,12 @@ export interface HistoryRecordDto {
   hasData?: boolean;
   version?: number;
   isDeleted?: boolean;
+  /** Local-only: false means text is a display excerpt, never a copy source. */
+  textComplete?: boolean;
+}
+
+export interface HistoryStarredUpdate {
+  starred: boolean;
 }
 
 /**
@@ -40,6 +46,7 @@ export interface HistoryRecordDto {
  */
 export interface HistoryQueryParams {
   page?: number;
+  sortByLastAccessed?: boolean;
   before?: string;
   after?: string;
   modifiedAfter?: string;
@@ -71,14 +78,32 @@ export interface ServerConfig {
   password?: string;
 }
 
+export interface ServerAccount extends ServerConfig {
+  id: string;
+  name: string;
+  lastConnectedAt: number;
+}
+
 /**
  * App Config
  */
+export interface DownloadRule {
+  id: string;
+  folder: string;
+  extensions: string[];
+}
+
 export interface AppConfig {
-  server: ServerConfig;
+  server?: ServerConfig;
+  servers: ServerAccount[];
+  activeServerId: string;
   pollingInterval: number;
   theme: 'light' | 'dark' | 'auto';
   language: 'system' | 'zh-CN' | 'en-US';
   preferPureBlackInDark: boolean;
   maxHistorySize: number;
+  cacheCapacityGB: number;
+  smallFileThresholdMB: number;
+  classifyDownloads: boolean;
+  downloadRules: DownloadRule[];
 }

@@ -1,0 +1,24 @@
+{
+  "color": [
+    {
+      "name": "widget_surface",
+      "value": "#161D28"
+    },
+    {
+      "name": "widget_button",
+      "value": "#243043"
+    },
+    {
+      "name": "widget_text",
+      "value": "#F1F5FB"
+    },
+    {
+      "name": "widget_secondary",
+      "value": "#ABB7C9"
+    },
+    {
+      "name": "widget_accent",
+      "value": "#80B8FF"
+    }
+  ]
+}

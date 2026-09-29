@@ -1,6 +1,15 @@
 import { image } from '@kit.ImageKit';
 
 export class ImageUtil {
+  static async createPixelMapFromPath(path: string): Promise<image.PixelMap> {
+    const imageSource = image.createImageSource(path);
+    try {
+      return await imageSource.createPixelMap({ desiredPixelFormat: image.PixelMapFormat.RGBA_8888 });
+    } finally {
+      await imageSource.release();
+    }
+  }
+
   static async createPixelMapFromBuffer(buffer: ArrayBuffer): Promise<image.PixelMap> {
     const imageSource = image.createImageSource(buffer.slice(0, buffer.byteLength));
     try {

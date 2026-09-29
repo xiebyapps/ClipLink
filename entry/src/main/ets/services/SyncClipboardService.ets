@@ -1,5 +1,6 @@
-import { HttpClient, BinaryResponse, StreamedBinaryResponse } from './HttpClient';
-import { ProfileDto, HistoryRecordDto, HistoryQueryParams, ClipboardContent, MultipartField } from '../types/ApiTypes';
+import { SyncOperationQueue } from './SyncOperationQueue';
+import { HttpClient, BinaryResponse, StreamedBinaryResponse, DownloadCancellation } from './HttpClient';
+import { ProfileDto, HistoryRecordDto, HistoryStarredUpdate, HistoryQueryParams, ClipboardContent, MultipartField } from '../types/ApiTypes';
 import { HashUtil } from '../utils/HashUtil';
 
 /**
@@ -26,6 +27,10 @@ export class SyncClipboardService {
   /**
    * Get current clipboard profile from /SyncClipboard.json
    */
+  async getServerTime(): Promise<string> {
+    return await this.httpClient.get<string>('/api/time');
+  }
+
   async getProfile(): Promise<ProfileDto> {
     return await this.httpClient.get<ProfileDto>('/SyncClipboard.json');
   }
@@ -46,7 +51,7 @@ export class SyncClipboardService {
   }
 
   async queryHistoryPage(page: number): Promise<HistoryRecordDto[]> {
-    return await this.queryHistory({ page });
+    return await this.queryHistory({ page, sortByLastAccessed: true });
   }
 
   async queryHistoryPages(limit: number): Promise<HistoryRecordDto[]> {
@@ -55,7 +60,7 @@ export class SyncClipboardService {
     let page = 1;
 
     while (merged.length < limit) {
-      const pageRecords = await this.queryHistory({ page });
+      const pageRecords = await this.queryHistoryPage(page);
       if (pageRecords.length === 0) {
         break;
       }
@@ -87,6 +92,18 @@ export class SyncClipboardService {
    */
   async getHistoryRecord(profileId: string): Promise<HistoryRecordDto> {
     return await this.httpClient.get<HistoryRecordDto>(`/api/history/${profileId}`);
+  }
+
+  async setHistoryStarred(record: HistoryRecordDto, starred: boolean): Promise<HistoryRecordDto> {
+    // Omit version/time so the server atomically advances its current revision.
+    // PATCH only this field: pinned/deletion/access time remain server-owned.
+    const update: HistoryStarredUpdate = { starred };
+    await this.httpClient.patch(`/api/history/${record.type}/${encodeURIComponent(record.hash)}`, update);
+    const updated = await this.getHistoryRecord(`${record.type}-${record.hash}`);
+    if (updated.isDeleted || !!updated.starred !== starred) {
+      throw new Error('Favorite update was not confirmed by server');
+    }
+    return updated;
   }
 
   /**
@@ -154,6 +171,11 @@ export class SyncClipboardService {
    * Upload text clipboard content (text-focused)
    */
   async uploadTextContent(text: string): Promise<void> {
+    await SyncOperationQueue.run((): Promise<void> => this.uploadTextContentExclusive(text));
+  }
+
+  // The coordinator already owns SyncOperationQueue when using this entry point.
+  async uploadTextContentExclusive(text: string, beforeCommit?: () => Promise<void>): Promise<void> {
     const hash = await HashUtil.calculateTextHash(text);
     
     const profile: ProfileDto = {
@@ -191,8 +213,13 @@ export class SyncClipboardService {
       await this.uploadHistoryRecord(record);
     }
 
-    // Upload to current profile
+    // Recheck both ends after preparing history and immediately before committing.
+    if (beforeCommit) await beforeCommit();
     await this.putProfile(profile);
+    const confirmed = await this.getProfile();
+    if (confirmed.type !== 'Text' || confirmed.hash !== hash) {
+      throw new Error('Server clipboard changed before upload could be confirmed');
+    }
   }
 
   /**
@@ -201,6 +228,11 @@ export class SyncClipboardService {
   async downloadTextContent(): Promise<string> {
     const profile = await this.getProfile();
     return await this.downloadTextFromProfile(profile);
+  }
+
+  async probe(): Promise<void> {
+    this.httpClient.setTimeout(5000);
+    await this.queryHistoryPage(1);
   }
 
   async downloadTextFromProfile(profile: ProfileDto): Promise<string> {
@@ -237,8 +269,9 @@ export class SyncClipboardService {
   }
 
   async downloadHistoryFileToPath(profileId: string, targetPath: string,
-    onProgress?: (received: number, total: number) => void): Promise<StreamedBinaryResponse> {
-    return await this.httpClient.getBinaryToFile(`/api/history/${profileId}/data`, targetPath, onProgress);
+    onProgress?: (received: number, total: number) => void,
+    cancellation?: DownloadCancellation): Promise<StreamedBinaryResponse> {
+    return await this.httpClient.getBinaryToFile(`/api/history/${profileId}/data`, targetPath, onProgress, cancellation);
   }
 
   /**
@@ -251,6 +284,9 @@ export class SyncClipboardService {
     }
     if (params.page !== undefined) {
       fields.push({ key: 'page', value: params.page.toString() });
+    }
+    if (params.sortByLastAccessed !== undefined) {
+      fields.push({ key: 'sortByLastAccessed', value: params.sortByLastAccessed.toString() });
     }
     if (params.before) {
       fields.push({ key: 'before', value: params.before });

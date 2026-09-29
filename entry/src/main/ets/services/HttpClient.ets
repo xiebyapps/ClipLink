@@ -2,6 +2,7 @@ import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { MultipartField } from '../types/ApiTypes';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { rcp } from '@kit.RemoteCommunicationKit';
 
 export interface BinaryResponse {
   buffer: ArrayBuffer;
@@ -17,6 +18,27 @@ export interface StreamedBinaryResponse {
   contentType?: string;
 }
 
+/** Optional cancellation for file streams; existing callers need no changes. */
+export class DownloadCancellation {
+  canceled: boolean = false;
+  private listener?: () => void;
+
+  cancel(): void {
+    if (this.canceled) return;
+    this.canceled = true;
+    this.listener?.();
+  }
+
+  subscribe(listener: () => void): void {
+    this.listener = listener;
+    if (this.canceled) listener();
+  }
+
+  unsubscribe(): void {
+    this.listener = undefined;
+  }
+}
+
 /**
  * HTTP Client - simple wrapper for SyncClipboard API requests
  */
@@ -24,6 +46,7 @@ export class HttpClient {
   private baseUrl: string = '';
   private username: string = '';
   private password: string = '';
+  private timeoutMs: number = 30000;
 
   constructor(baseUrl?: string, username?: string, password?: string) {
     if (baseUrl) {
@@ -128,9 +151,11 @@ export class HttpClient {
       const options: http.HttpRequestOptions = {
         method,
         header: this.buildHeaders(contentType),
-        readTimeout: 30000,
-        connectTimeout: 30000,
-        expectDataType: http.HttpDataType.STRING
+        readTimeout: this.timeoutMs,
+        connectTimeout: this.timeoutMs,
+        expectDataType: http.HttpDataType.STRING,
+        // Clipboard and history metadata must reflect writes by this or other clients.
+        usingCache: false
       };
 
       if (body.length > 0) {
@@ -166,6 +191,14 @@ export class HttpClient {
     return Array.isArray(value) ? value[0] : value;
   }
 
+  authorizationHeader(): string {
+    return this.getAuthHeader();
+  }
+
+  setTimeout(milliseconds: number): void {
+    this.timeoutMs = milliseconds;
+  }
+
   private responseFileName(disposition: string | undefined): string | undefined {
     if (!disposition) {
       return undefined;
@@ -188,8 +221,8 @@ export class HttpClient {
       const options: http.HttpRequestOptions = {
         method,
         header: this.buildHeaders(''),
-        readTimeout: 30000,
-        connectTimeout: 30000,
+        readTimeout: this.timeoutMs,
+        connectTimeout: this.timeoutMs,
         expectDataType: http.HttpDataType.ARRAY_BUFFER
       };
 
@@ -241,7 +274,9 @@ export class HttpClient {
   }
 
   async getBinaryToFile(path: string, targetPath: string,
-    onProgress?: (received: number, total: number) => void): Promise<StreamedBinaryResponse> {
+    onProgress?: (received: number, total: number) => void,
+    cancellation?: DownloadCancellation): Promise<StreamedBinaryResponse> {
+    if (cancellation?.canceled) throw new Error('Download canceled');
     return new Promise((resolve, reject) => {
       const request = http.createHttp();
       const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
@@ -256,6 +291,7 @@ export class HttpClient {
       let contentLength = 0;
 
       const close = (): void => {
+        cancellation?.unsubscribe();
         fs.closeSync(file);
         request.destroy();
       };
@@ -275,6 +311,9 @@ export class HttpClient {
         close();
         resolve({ path: targetPath, prefix: prefix.buffer.slice(0, prefixSize), size, fileName, contentType });
       };
+
+      cancellation?.subscribe((): void => fail(new Error('Download canceled')));
+      if (settled) return;
 
       request.on('headersReceive', (headers: Object): void => {
         fileName = this.responseFileName(this.responseHeader(headers, 'content-disposition'));
@@ -330,6 +369,25 @@ export class HttpClient {
   async put(path: string, data: object): Promise<void> {
     console.info(`[HttpClient] PUT ${this.baseUrl}${path}`);
     await this.request(path, http.RequestMethod.PUT, JSON.stringify(data));
+  }
+
+  async patch(path: string, data: object): Promise<void> {
+    // net.http's PATCH enum requires API 26; RCP supports it on our minimum API 20.
+    const session = rcp.createSession({ requestConfiguration: {
+      transfer: { timeout: { connectMs: this.timeoutMs, transferMs: this.timeoutMs } }
+    } });
+    try {
+      const response = await session.fetch(new rcp.Request(`${this.baseUrl}${path}`,
+        'PATCH', this.buildHeaders(), JSON.stringify(data)));
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        throw new Error(`HTTP ${response.statusCode}: ${response.toString() || ''}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) throw error;
+      throw new Error(`REQUEST_${(error as BusinessError).code}`);
+    } finally {
+      session.close();
+    }
   }
 
   /**

@@ -8,6 +8,10 @@ import { image } from '@kit.ImageKit';
 export class ClipboardUtil {
   private static permissionPromise: Promise<boolean> | null = null;
 
+  static resetReadPermission(): void {
+    ClipboardUtil.permissionPromise = null;
+  }
+
   private static getAbilityContext(): Context {
     const context = AppStorage.get<Context>('abilityContext');
     if (!context) {
@@ -16,30 +20,22 @@ export class ClipboardUtil {
     return context as Context;
   }
 
-  static async ensureReadPermission(): Promise<boolean> {
-    if (ClipboardUtil.permissionPromise) {
-      return await ClipboardUtil.permissionPromise;
+  static async ensureReadPermission(context?: Context, allowPrompt: boolean = true): Promise<boolean> {
+    const owner = context || ClipboardUtil.getAbilityContext();
+    const manager = abilityAccessCtrl.createAtManager();
+    try {
+      const status = await manager.checkAccessToken(owner.applicationInfo.accessTokenId,
+        'ohos.permission.READ_PASTEBOARD');
+      if (status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) return true;
+    } catch (_) { /* A permission check failure must never grant access. */ }
+    if (!allowPrompt) return false;
+    if (!ClipboardUtil.permissionPromise) {
+      ClipboardUtil.permissionPromise = manager.requestPermissionsFromUser(owner,
+        ['ohos.permission.READ_PASTEBOARD']).then((result): boolean =>
+          result.authResults.length > 0 && result.authResults[0] === 0).catch((): boolean => false);
     }
-
-    ClipboardUtil.permissionPromise = (async (): Promise<boolean> => {
-      try {
-        const atManager = abilityAccessCtrl.createAtManager();
-        const result = await atManager.requestPermissionsFromUser(
-          ClipboardUtil.getAbilityContext(),
-          ['ohos.permission.READ_PASTEBOARD']
-        );
-        return result.authResults.length > 0 && result.authResults[0] === 0;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('12100011')) {
-          return true;
-        }
-        console.error('[ClipboardUtil] ensureReadPermission error:', JSON.stringify(error));
-        return false;
-      }
-    })();
-
-    return await ClipboardUtil.permissionPromise;
+    try { return await ClipboardUtil.permissionPromise; }
+    finally { ClipboardUtil.permissionPromise = null; }
   }
 
   /**
@@ -61,12 +57,7 @@ export class ClipboardUtil {
       if (primaryMimeType === pasteboard.MIMETYPE_TEXT_PLAIN) {
         return pasteData.getPrimaryText() || '';
       }
-      if (primaryMimeType === pasteboard.MIMETYPE_TEXT_URI) {
-        return pasteData.getPrimaryUri() || '';
-      }
-      if (pasteData.getRecordCount() > 0) {
-        return pasteData.getRecord(0).toPlainText() || '';
-      }
+
       return '';
     } catch (error) {
       console.error('[ClipboardUtil] getClipboardText error:', JSON.stringify(error));
@@ -165,7 +156,7 @@ export class ClipboardUtil {
       }
       const pasteData = await systemPasteboard.getData();
       const mimeType = pasteData.getPrimaryMimeType();
-      return mimeType !== pasteboard.MIMETYPE_PIXELMAP;
+      return mimeType === pasteboard.MIMETYPE_TEXT_PLAIN;
     } catch (error) {
       console.error('[ClipboardUtil] hasText error:', JSON.stringify(error));
       return false;

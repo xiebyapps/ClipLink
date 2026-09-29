@@ -11,6 +11,54 @@
     {
       "name": "EntryAbility_label",
       "value": "ClipLink"
+    },
+    {
+      "name": "shortcut_upload",
+      "value": "Upload clipboard"
+    },
+    {
+      "name": "shortcut_sync",
+      "value": "Sync clipboard"
+    },
+    {
+      "name": "widget_name",
+      "value": "Clipboard actions"
+    },
+    {
+      "name": "widget_description",
+      "value": "Upload or sync your clipboard; tap to reveal current content."
+    },
+    {
+      "name": "widget_local",
+      "value": "Local clipboard"
+    },
+    {
+      "name": "widget_remote",
+      "value": "Server content"
+    },
+    {
+      "name": "widget_hidden",
+      "value": "Tap to show"
+    },
+    {
+      "name": "widget_hide",
+      "value": "Tap to hide"
+    },
+    {
+      "name": "widget_reading",
+      "value": "Reading…"
+    },
+    {
+      "name": "widget_refresh_required",
+      "value": "Refreshing card. Please tap again."
+    },
+    {
+      "name": "widget_upload",
+      "value": "Upload"
+    },
+    {
+      "name": "widget_sync",
+      "value": "Sync"
     }
   ]
 }

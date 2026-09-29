@@ -1,11 +1,13 @@
+import { ClipboardWidgetService } from '../services/ClipboardWidgetService';
 import HomePage from './HomePage';
 import HistoryPage from './HistoryPage';
 import SettingsPage from './SettingsPage';
+import { DownloadProgressSnackBar } from '../components/DownloadProgressSnackBar';
+import { DownloadNoticeService } from '../services/DownloadNoticeService';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { HdsTabs, hdsMaterial } from '@kit.UIDesignKit';
 import { ThemeUtil, ThemePalette } from '../utils/ThemeUtil';
 import { LocalizationUtil } from '../utils/LocalizationUtil';
-import { InteractionEffectUtil } from '../utils/InteractionEffectUtil';
 import {
   getBottomTabLayoutSpec,
   getMainTabSpecs,
@@ -15,39 +17,54 @@ import {
 @Entry
 @Component
 struct Index {
+  @StorageLink('downloadNoticeRevision') @Watch('handleDownloadNoticeChange') downloadNoticeRevision: number = 0;
+  private noticeOpened: boolean = false;
+  private noticeController: CustomDialogController = new CustomDialogController({
+    builder: DownloadProgressSnackBar(),
+    alignment: DialogAlignment.Bottom,
+    offset: { dx: 0, dy: -(116 + (AppStorage.get<number>('safeAreaBottom') || 0)) },
+    autoCancel: false,
+    customStyle: true,
+    isModal: false,
+    onWillDismiss: (action: DismissDialogAction): void => {
+      if (!DownloadNoticeService.snapshot().visible) action.dismiss();
+    }
+  });
+  @StorageLink('desktopActionRevision') @Watch('showDesktopHome') desktopActionRevision: number = 0;
+  private showDesktopHome(): void { this.currentTabIndex = 0; }
   @State currentTabIndex: number = 0;
-  @State pressedTab: string = '';
-  @State useHdsEffects: boolean = false;
-  @StorageLink('appTheme') appTheme: string = 'auto';
-  @StorageLink('appLanguage') appLanguage: string = 'system';
+  @StorageLink('appTheme') @Watch('refreshCards') appTheme: string = 'auto';
+  @StorageLink('appLanguage') @Watch('refreshCards') appLanguage: string = 'system';
   @StorageLink('systemLanguage') systemLanguage: string = 'en';
   @StorageLink('floatingTabsEnabled') supportsFloatingTabs: boolean = false;
-  @StorageLink('preferPureBlackInDark') preferPureBlackInDark: boolean = false;
+  @StorageLink('preferPureBlackInDark') @Watch('refreshCards') preferPureBlackInDark: boolean = false;
   @StorageLink('systemColorMode') systemColorMode: number =
     ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-  @State private supportsImmersiveMaterial: boolean = false;
-  @State private supportsAdaptiveMaterial: boolean = false;
   private readonly tabs: MainTabSpec[] = getMainTabSpecs();
   private readonly tabLayout = getBottomTabLayoutSpec();
 
-  aboutToAppear(): void {
-    this.useHdsEffects = canIUse('SystemCapability.UIDesign.HDSComponent.Core');
-    if (!this.supportsFloatingTabs) {
-      return;
-    }
-    try {
-      const materialTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();
-      this.supportsImmersiveMaterial =
-        materialTypes.indexOf(hdsMaterial.MaterialType.IMMERSIVE) >= 0;
-      this.supportsAdaptiveMaterial =
-        materialTypes.indexOf(hdsMaterial.MaterialType.ADAPTIVE) >= 0;
-    } catch (error) {
-      console.warn('[Index] Unable to query supported material types');
-    }
-  }
+  private refreshCards(): void { void ClipboardWidgetService.resetAll(); }
 
   private t(value: string): string {
     return LocalizationUtil.text(value, this.appLanguage, this.systemLanguage);
+  }
+
+  private handleDownloadNoticeChange(): void {
+    const visible = DownloadNoticeService.snapshot().visible;
+    if (visible && !this.noticeOpened) {
+      this.noticeOpened = true;
+      this.noticeController.open();
+    } else if (!visible && this.noticeOpened) {
+      this.noticeOpened = false;
+      this.noticeController.close();
+    }
+  }
+
+  aboutToAppear(): void { this.handleDownloadNoticeChange(); }
+
+  aboutToDisappear(): void {
+    this.noticeController.close();
+    this.noticeOpened = false;
   }
 
   private getPalette(): ThemePalette {
@@ -97,15 +114,6 @@ struct Index {
     .backgroundColor(!this.supportsFloatingTabs && this.currentTabIndex === targetIndex
       ? this.getPalette().accentSoft : Color.Transparent)
     .borderRadius(20)
-    .visualEffect(InteractionEffectUtil.button(this.pressedTab === tab.key, this.useHdsEffects))
-    .onTouch((event: TouchEvent) => {
-      if (event.type === TouchType.Down) {
-        this.pressedTab = tab.key;
-      } else if ((event.type === TouchType.Up || event.type === TouchType.Cancel) &&
-        this.pressedTab === tab.key) {
-        this.pressedTab = '';
-      }
-    })
   }
 
   build() {
@@ -134,20 +142,13 @@ struct Index {
       .barMode(BarMode.Fixed)
       .barOverlap(true)
       .barFloatingStyle({
-        barWidth: { smallWidth: 280, mediumWidth: 360, largeWidth: 432 },
         barBottomMargin: 16,
         adaptToHandedness: true,
         gradientMask: { maskColor: this.getPalette().isDark ? '#9911141A' : '#99F4F6F9', maskHeight: 112 },
         lightColor: this.getPalette().accent,
         systemMaterialEffect: {
-          materialType: this.supportsImmersiveMaterial
-            ? hdsMaterial.MaterialType.IMMERSIVE
-            : this.supportsAdaptiveMaterial
-              ? hdsMaterial.MaterialType.ADAPTIVE
-              : hdsMaterial.MaterialType.NONE,
-          materialLevel: this.supportsImmersiveMaterial
-            ? hdsMaterial.MaterialLevel.EXQUISITE
-            : hdsMaterial.MaterialLevel.SMOOTH
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         }
       })
       .scrollable(false)

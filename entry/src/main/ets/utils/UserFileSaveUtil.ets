@@ -1,3 +1,4 @@
+import { DownloadOrganizationService } from '../services/DownloadOrganizationService';
 import { fileIo as fs, fileUri, picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
@@ -11,6 +12,7 @@ export interface SavedFile {
   uri: string;
   category: SaveCategory;
   fileName: string;
+  location?: string;
 }
 
 interface UniqueTarget {
@@ -177,42 +179,29 @@ export class UserFileSaveUtil {
   }
 
   static async saveAutomatically(response: DownloadedBinary, type: ClipboardContentType,
-    preview: string | undefined, dataName: string | undefined, fallbackName: string): Promise<SavedFile> {
+    preview: string | undefined, dataName: string | undefined, fallbackName: string, context?: common.UIAbilityContext): Promise<SavedFile> {
     const fileName = UserFileSaveUtil.suggestedFileName(response, preview, dataName, fallbackName);
     const category = UserFileSaveUtil.category(type, fileName, response.contentType,
       UserFileSaveUtil.sample(response));
     if (category === 'Image') {
       throw new Error('Use Save to Gallery for images');
     }
-    const options = new picker.DocumentSaveOptions();
-    options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
-    const documentPicker = new picker.DocumentViewPicker(UserFileSaveUtil.getContext());
-    const uris = await documentPicker.save(options);
-    if (!uris || uris.length === 0) {
-      throw new Error('Download directory is unavailable');
-    }
-    const basePath = new fileUri.FileUri(uris[0]).path;
-    const appDirectory = `${basePath}/${UserFileSaveUtil.appDirectory}`;
-    const directory = `${appDirectory}/${category}`;
-    UserFileSaveUtil.ensureDirectory(appDirectory);
-    UserFileSaveUtil.ensureDirectory(directory);
-    const target = UserFileSaveUtil.uniquePath(directory, fileName);
-    const file = fs.openSync(target.path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-    let completed = false;
-    try {
-      await UserFileSaveUtil.writeDownloaded(file, response);
-      completed = true;
-    } finally {
-      fs.closeSync(file);
-      if (!completed) {
-        fs.unlinkSync(target.path);
-      }
-    }
-    return { uri: target.path, category: category, fileName: target.name };
+    const placement = await DownloadOrganizationService.getInstance().save(fileName, async (path: string): Promise<void> => {
+      const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+      try { await UserFileSaveUtil.writeDownloaded(file, response); }
+      finally { fs.closeSync(file); }
+    }, context);
+    const bundle = (context || UserFileSaveUtil.getContext()).abilityInfo.bundleName;
+    return { uri: placement.path, category: category, fileName: placement.name,
+      location: `Download/${bundle}${placement.folder ? `/${placement.folder}` : ''}` };
+  }
+
+  static savedMessage(saved: SavedFile): string {
+    return `Saved to ${saved.location || saved.uri}`;
   }
 
   static async saveToGallery(response: DownloadedBinary, preview: string | undefined,
-    fallbackName: string): Promise<SavedFile> {
+    fallbackName: string, context?: common.UIAbilityContext): Promise<SavedFile> {
     const detected = ImageUtil.guessImageExtension(UserFileSaveUtil.sample(response));
     const extension = detected === '.img' ? UserFileSaveUtil.extension(
       UserFileSaveUtil.suggestedFileName(response, preview, undefined, fallbackName)) : detected.slice(1);
@@ -222,7 +211,7 @@ export class UserFileSaveUtil {
     const original = UserFileSaveUtil.suggestedFileName(response, preview, undefined, fallbackName);
     const base = original.replace(/\.[^.]+$/, '').replace(/[.\\/:*?"'`<>|{}\[\]]/g, '_');
     const title = `${base.slice(0, 160)}-${Date.now()}-${++UserFileSaveUtil.gallerySequence}`;
-    const helper = photoAccessHelper.getPhotoAccessHelper(UserFileSaveUtil.getContext());
+    const helper = photoAccessHelper.getPhotoAccessHelper(context || UserFileSaveUtil.getContext());
     const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, extension, { title: title });
     const file = fs.openSync(uri, fs.OpenMode.READ_WRITE);
     try {
@@ -234,10 +223,10 @@ export class UserFileSaveUtil {
   }
 
   static async saveAs(response: DownloadedBinary, preview: string | undefined,
-    dataName: string | undefined, fallbackName: string): Promise<string | null> {
+    dataName: string | undefined, fallbackName: string, context?: common.UIAbilityContext): Promise<string | null> {
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = [UserFileSaveUtil.suggestedFileName(response, preview, dataName, fallbackName)];
-    const documentPicker = new picker.DocumentViewPicker(UserFileSaveUtil.getContext());
+    const documentPicker = new picker.DocumentViewPicker(context || UserFileSaveUtil.getContext());
     const uris = await documentPicker.save(options);
     if (!uris || uris.length === 0) {
       return null;
