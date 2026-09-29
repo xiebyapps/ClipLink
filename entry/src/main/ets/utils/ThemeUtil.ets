@@ -6,6 +6,9 @@ export interface ThemePalette {
   isDark: boolean;
   pageBackground: string;
   pageSurface: string;
+  navigationSurface: string;
+  heroStart: string;
+  heroEnd: string;
   cardBackground: string;
   elevatedBackground: string;
   inputBackground: string;
@@ -23,6 +26,8 @@ export interface ThemePalette {
   buttonDangerBackground: string;
   buttonDangerText: string;
   success: string;
+  successSurface: string;
+  successBorder: string;
   danger: string;
 }
 
@@ -59,70 +64,85 @@ export class ThemeUtil {
           isDark: true,
           pageBackground: '#000000',
           pageSurface: '#000000',
-          cardBackground: '#050505',
-          elevatedBackground: '#0A0A0A',
-          inputBackground: '#101010',
-          borderColor: '#1F1F1F',
+          navigationSurface: '#E6000000',
+          heroStart: '#101A2A',
+          heroEnd: '#06090F',
+          cardBackground: '#060606',
+          elevatedBackground: '#111318',
+          inputBackground: '#15171C',
+          borderColor: '#242830',
           shadowColor: '#00000000',
           textPrimary: '#FAFAFA',
           textSecondary: '#CACACA',
           textMuted: '#8A8A8A',
-          accent: '#6AA8FF',
-          accentSoft: '#102038',
-          buttonPrimaryBackground: '#6AA8FF',
+          accent: '#83B7FF',
+          accentSoft: '#172A46',
+          buttonPrimaryBackground: '#83B7FF',
           buttonPrimaryText: '#05070B',
-          buttonSecondaryBackground: '#171717',
+          buttonSecondaryBackground: '#20242D',
           buttonSecondaryText: '#F3F3F3',
           buttonDangerBackground: '#A63C4A',
           buttonDangerText: '#FFF5F7',
           success: '#58D07B',
+          successSurface: '#0E2B1A',
+          successBorder: '#287746',
           danger: '#FF7D8A'
         }
       : resolvedTheme === 'dark'
         ? {
           isDark: true,
-          pageBackground: '#0B1020',
-          pageSurface: '#10182A',
-          cardBackground: '#131D31',
-          elevatedBackground: '#1A2840',
-          inputBackground: '#172338',
-          borderColor: '#314563',
-          shadowColor: '#00000026',
-          textPrimary: '#F5F7FA',
-          textSecondary: '#C3CEDD',
-          textMuted: '#8C9AAF',
-          accent: '#5EA1FF',
-          accentSoft: '#233B5F',
-          buttonPrimaryBackground: '#5EA1FF',
+          pageBackground: '#11141A',
+          pageSurface: '#1C2028',
+          navigationSurface: '#E51C2028',
+          heroStart: '#243A59',
+          heroEnd: '#1C2028',
+          cardBackground: '#222731',
+          elevatedBackground: '#292F3B',
+          inputBackground: '#2A303B',
+          borderColor: '#383F4D',
+          shadowColor: '#00000040',
+          textPrimary: '#F6F7FA',
+          textSecondary: '#C2C8D2',
+          textMuted: '#929CAA',
+          accent: '#88B9FF',
+          accentSoft: '#273E5D',
+          buttonPrimaryBackground: '#88B9FF',
           buttonPrimaryText: '#08111F',
-          buttonSecondaryBackground: '#2A3445',
+          buttonSecondaryBackground: '#303744',
           buttonSecondaryText: '#E6EDF7',
           buttonDangerBackground: '#A63C4A',
           buttonDangerText: '#FFF5F7',
           success: '#4ECF7A',
+          successSurface: '#183B29',
+          successBorder: '#347C50',
           danger: '#FF7D8A'
         }
       : {
           isDark: false,
-          pageBackground: '#EEF3FA',
+          pageBackground: '#F4F6F9',
           pageSurface: '#FFFFFF',
-          cardBackground: '#FCFDFF',
-          elevatedBackground: '#F4F8FF',
-          inputBackground: '#FFFFFF',
-          borderColor: '#D6E1F0',
-          shadowColor: '#17233812',
-          textPrimary: '#1B1F27',
-          textSecondary: '#5B667A',
-          textMuted: '#7F8A9D',
-          accent: '#007DFF',
+          navigationSurface: '#EDFFFFFF',
+          heroStart: '#E7F1FF',
+          heroEnd: '#FFFFFF',
+          cardBackground: '#FFFFFF',
+          elevatedBackground: '#F5F7FB',
+          inputBackground: '#F5F7FB',
+          borderColor: '#E6EAF0',
+          shadowColor: '#20395C14',
+          textPrimary: '#18212F',
+          textSecondary: '#596677',
+          textMuted: '#8290A0',
+          accent: '#166AE8',
           accentSoft: '#E8F1FF',
-          buttonPrimaryBackground: '#007DFF',
+          buttonPrimaryBackground: '#166AE8',
           buttonPrimaryText: '#FFFFFF',
-          buttonSecondaryBackground: '#EDF2F7',
-          buttonSecondaryText: '#243247',
+          buttonSecondaryBackground: '#F0F3F8',
+          buttonSecondaryText: '#26374F',
           buttonDangerBackground: '#E64D4F',
           buttonDangerText: '#FFFFFF',
           success: '#00A65A',
+          successSurface: '#E4F6E9',
+          successBorder: '#80D49D',
            danger: '#D93838'
          };
   }

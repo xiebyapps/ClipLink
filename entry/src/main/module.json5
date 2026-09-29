@@ -10,6 +10,12 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "metadata": [
+      {
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -28,16 +34,100 @@
           }
         ],
         "startWindowIcon": "$media:app_icon",
-        "startWindowBackground": "$color:start_window_background"
+        "startWindowBackground": "$color:start_window_background",
+        "metadata": [
+          {
+            "name": "ohos.ability.shortcuts",
+            "resource": "$profile:desktop_shortcuts"
+          }
+        ]
+      },
+      {
+        "name": "ClipboardActionAbility",
+        "srcEntry": "./ets/entryability/ClipboardActionAbility.ets",
+        "launchType": "singleton",
+        "exported": true,
+        "label": "$string:EntryAbility_label",
+        "backgroundModes": [
+          "dataTransfer"
+        ],
+        "startWindowIcon": "$media:app_icon",
+        "startWindowBackground": "$color:clipboard_action_transparent"
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "ShareAbility",
+        "srcEntry": "./ets/entryability/ShareAbility.ets",
+        "type": "share",
+        "exported": true,
+        "label": "$string:EntryAbility_label",
+        "icon": "$media:app_icon",
+        "skills": [
+          {
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.object",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.file",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.image",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.audio",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.video",
+                "maxFileSupported": 100
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ClipboardFormAbility",
+        "srcEntry": "./ets/entryability/ClipboardFormAbility.ets",
+        "type": "form",
+        "exported": true,
+        "label": "$string:widget_name",
+        "description": "$string:widget_description",
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:clipboard_forms"
+          }
+        ]
       }
     ],
     "requestPermissions": [
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      {
+        "name": "ohos.permission.DETECT_GESTURE"
+      },
       {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:internet_reason",
         "usedScene": {
           "abilities": [
-            "EntryAbility"
+            "EntryAbility",
+            "ShareAbility",
+            "ClipboardActionAbility"
           ],
           "when": "inuse"
         }
@@ -47,7 +137,9 @@
         "reason": "$string:internet_reason",
         "usedScene": {
           "abilities": [
-            "EntryAbility"
+            "EntryAbility",
+            "ClipboardFormAbility",
+            "ClipboardActionAbility"
           ],
           "when": "inuse"
         }
@@ -63,14 +155,7 @@
         }
       },
       {
-        "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
-        "reason": "$string:internet_reason",
-        "usedScene": {
-          "abilities": [
-            "EntryAbility"
-          ],
-          "when": "inuse"
-        }
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       }
     ]
   }

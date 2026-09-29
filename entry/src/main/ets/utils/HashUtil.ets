@@ -1,4 +1,5 @@
 import cryptoFramework from '@ohos.security.cryptoFramework';
+import util from '@ohos.util';
 
 /**
  * Hash utility - calculates SHA256 hash
@@ -12,7 +13,7 @@ export class HashUtil {
     try {
       const mdAlgorithm = cryptoFramework.createMd('SHA256');
       const data: cryptoFramework.DataBlob = {
-        data: new Uint8Array(HashUtil.stringToBytes(text))
+        data: HashUtil.utf8Bytes(text)
       };
       
       await mdAlgorithm.update(data);
@@ -28,22 +29,8 @@ export class HashUtil {
   /**
    * Convert string to byte array (UTF-8)
    */
-  private static stringToBytes(str: string): number[] {
-    const bytes: number[] = [];
-    for (let i = 0; i < str.length; i++) {
-      const code = str.charCodeAt(i);
-      if (code <= 0x7f) {
-        bytes.push(code);
-      } else if (code <= 0x7ff) {
-        bytes.push(0xc0 | (code >> 6));
-        bytes.push(0x80 | (code & 0x3f));
-      } else {
-        bytes.push(0xe0 | (code >> 12));
-        bytes.push(0x80 | ((code >> 6) & 0x3f));
-        bytes.push(0x80 | (code & 0x3f));
-      }
-    }
-    return bytes;
+  static utf8Bytes(str: string): Uint8Array {
+    return new util.TextEncoder().encode(str);
   }
 
   /**

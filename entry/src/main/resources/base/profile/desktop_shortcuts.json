@@ -1,0 +1,34 @@
+{
+  "shortcuts": [
+    {
+      "shortcutId": "upload",
+      "label": "$string:shortcut_upload",
+      "icon": "$media:shortcut_upload",
+      "wants": [
+        {
+          "bundleName": "com.xiebaiyuan.syncclipboard.harmony",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "desktopAction": "upload"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "sync",
+      "label": "$string:shortcut_sync",
+      "icon": "$media:shortcut_sync",
+      "wants": [
+        {
+          "bundleName": "com.xiebaiyuan.syncclipboard.harmony",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "desktopAction": "sync"
+          }
+        }
+      ]
+    }
+  ]
+}

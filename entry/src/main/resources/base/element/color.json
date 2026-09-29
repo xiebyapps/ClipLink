@@ -3,6 +3,30 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "widget_surface",
+      "value": "#F4F6F9"
+    },
+    {
+      "name": "widget_button",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "widget_text",
+      "value": "#17212D"
+    },
+    {
+      "name": "widget_secondary",
+      "value": "#647082"
+    },
+    {
+      "name": "widget_accent",
+      "value": "#1677FF"
+    },
+    {
+      "name": "clipboard_action_transparent",
+      "value": "#00000000"
     }
   ]
 }

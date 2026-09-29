@@ -11,6 +11,54 @@
     {
       "name": "EntryAbility_label",
       "value": "云剪"
+    },
+    {
+      "name": "shortcut_upload",
+      "value": "上传剪贴板"
+    },
+    {
+      "name": "shortcut_sync",
+      "value": "同步剪贴板"
+    },
+    {
+      "name": "widget_name",
+      "value": "剪贴板快捷操作"
+    },
+    {
+      "name": "widget_description",
+      "value": "上传或同步剪贴板，点击显示当前内容。"
+    },
+    {
+      "name": "widget_local",
+      "value": "本机剪贴板"
+    },
+    {
+      "name": "widget_remote",
+      "value": "服务器当前内容"
+    },
+    {
+      "name": "widget_hidden",
+      "value": "点击显示"
+    },
+    {
+      "name": "widget_hide",
+      "value": "点击隐藏"
+    },
+    {
+      "name": "widget_reading",
+      "value": "读取中…"
+    },
+    {
+      "name": "widget_refresh_required",
+      "value": "正在更新卡片，请稍后再次点击"
+    },
+    {
+      "name": "widget_upload",
+      "value": "上传"
+    },
+    {
+      "name": "widget_sync",
+      "value": "同步"
     }
   ]
 }
