@@ -5,6 +5,7 @@ export class PollingController {
   private static instances: Set<PollingController> = new Set();
   private timerId: number = -1;
   private isRunning: boolean = false;
+  private resumeOnForeground: boolean = false;
   private isTicking: boolean = false;
   private intervalSeconds: number = 5;
   private callback: () => Promise<void> | void = () => {};
@@ -24,6 +25,7 @@ export class PollingController {
     this.intervalSeconds = intervalSeconds;
     this.callback = callback;
     this.isRunning = true;
+    this.resumeOnForeground = true;
 
     console.info(`[PollingController] Starting with interval ${intervalSeconds}s`);
     
@@ -50,7 +52,7 @@ export class PollingController {
       this.timerId = -1;
     }
     this.isRunning = false;
-    this.isTicking = false;
+    this.resumeOnForeground = false;
     console.info('[PollingController] Stopped');
   }
 
@@ -59,6 +61,22 @@ export class PollingController {
    */
   getIsRunning(): boolean {
     return this.isRunning;
+  }
+
+  static pauseAll(): void {
+    PollingController.instances.forEach((instance: PollingController): void => {
+      const shouldResume = instance.isRunning || instance.resumeOnForeground;
+      instance.stop();
+      instance.resumeOnForeground = shouldResume;
+    });
+  }
+
+  static resumeAll(): void {
+    PollingController.instances.forEach((instance: PollingController): void => {
+      if (instance.resumeOnForeground) {
+        instance.start(instance.intervalSeconds, instance.callback);
+      }
+    });
   }
 
   static stopAll(): void {

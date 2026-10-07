@@ -47,13 +47,14 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     console.info('[EntryAbility] onForeground');
+    PollingController.resumeAll();
     this.syncSystemTheme(this.context?.config?.colorMode);
     void ThemeUtil.applyStoredTheme();
   }
 
   onBackground(): void {
     console.info('[EntryAbility] onBackground');
-    PollingController.stopAll();
+    PollingController.pauseAll();
   }
 
   onConfigurationUpdate(config: Configuration): void {

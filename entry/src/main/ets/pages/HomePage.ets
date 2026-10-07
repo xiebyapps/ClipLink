@@ -90,6 +90,9 @@ export default struct HomePage {
 
   private resetSyncStatusLater(): void {
     this.clearSyncStatusTimer();
+    if (this.syncStatus.startsWith('Upload Error:') || this.syncStatus.startsWith('Download Error:')) {
+      return;
+    }
     this.syncStatusTimer = setTimeout((): void => {
       this.syncStatus = 'Idle';
       this.syncStatusTimer = -1;
@@ -289,26 +292,28 @@ export default struct HomePage {
           }
           .alignItems(HorizontalAlign.Start)
           Blank()
-          Text(this.syncStatus)
-            .fontSize($r('sys.float.Caption_L'))
-            .fontColor(
-              getSyncStatusTone(this.syncStatus) === 'danger'
-                ? this.getPalette().danger
-                : getSyncStatusTone(this.syncStatus) === 'success'
-                  ? this.getPalette().success
-                  : this.getPalette().textSecondary
-            )
-            .padding({
-              left: $r('sys.float.padding_level4'),
-              right: $r('sys.float.padding_level4'),
-              top: $r('sys.float.padding_level2'),
-              bottom: $r('sys.float.padding_level2')
-            })
-            .backgroundColor(this.getPalette().pageSurface)
-            .borderRadius($r('sys.float.corner_radius_level6'))
         }
         .width('90%')
         .margin({ top: $r('sys.float.padding_level8') })
+
+        Text(this.syncStatus)
+          .fontSize($r('sys.float.Caption_L'))
+          .fontColor(
+            getSyncStatusTone(this.syncStatus) === 'danger'
+              ? this.getPalette().danger
+              : getSyncStatusTone(this.syncStatus) === 'success'
+                ? this.getPalette().success
+                : this.getPalette().textSecondary
+          )
+          .padding({
+            left: $r('sys.float.padding_level4'),
+            right: $r('sys.float.padding_level4'),
+            top: $r('sys.float.padding_level2'),
+            bottom: $r('sys.float.padding_level2')
+          })
+          .backgroundColor(this.getPalette().pageSurface)
+          .borderRadius($r('sys.float.corner_radius_level6'))
+          .width('90%')
 
         Column({ space: 14 }) {
           Row() {
